@@ -9,8 +9,10 @@ import { World } from '../world/World';
 import { WorldRenderer } from './WorldRenderer';
 import { TimeSystem } from '../systems/TimeSystem';
 import { PathfindingSystem } from '../systems/PathfindingSystem';
+import { PopulationSystem } from '../systems/PopulationSystem';
 import { Vehicle } from '../entities/Vehicle';
 import { Agent } from '../entities/Agent';
+import { Resident } from '../entities/Resident';
 import { MapData, AgentType } from '../types';
 import { Minimap } from './Minimap';
 import { InteractionSystem } from '../systems/InteractionSystem';
@@ -24,13 +26,9 @@ async function init() {
     let pathSystem: PathfindingSystem;
 
     // --- 2. Graphics Setup ---
-    // Desert sky - pale blue with warm horizon tint
-    const skyColor = 0xB8D4E8; // Pale desert sky
-    const horizonColor = 0xE8D4C0; // Warm sandy horizon for fog
-
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(skyColor);
-    scene.fog = new THREE.Fog(horizonColor, 3000, 12000); // Distant fog for desert haze
+    scene.background = new THREE.Color(0x000000); // Black background
+    scene.fog = new THREE.Fog(0x111111, 5000, 15000); // Dark fog
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 50, 20000);
     camera.position.set(0, 2000, 2000);
@@ -55,7 +53,11 @@ async function init() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.maxDistance = 10000;
-    controls.minDistance = 200;
+    controls.minDistance = 50; // Allow closer zoom
+
+    // Camera follow system
+    let followTarget: THREE.Object3D | null = null;
+    let followOffset = new THREE.Vector3(0, 150, 150); // Offset from target
 
     // Lights - warm desert sun with proper shadows
     // Ambient: low fill to prevent pure black shadows
@@ -102,37 +104,38 @@ async function init() {
     // Minimap
     const minimap = new Minimap(controls, camera);
 
-    // Legend - positioned below minimap with compact layout
+    // Legend - positioned above minimap
     const legend = document.createElement('div');
     legend.style.cssText = `
         position: absolute;
-        bottom: 250px;
+        bottom: 252px;
         left: 20px;
-        width: 180px;
-        background: rgba(30, 25, 20, 0.85);
-        color: #E8DFD0;
-        padding: 10px 12px;
+        background: rgba(30, 25, 20, 0.9);
+        color: #CCC;
+        padding: 10px 14px;
         border-radius: 8px;
         font-family: system-ui, sans-serif;
-        font-size: 10px;
-        line-height: 1.4;
+        font-size: 11px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     `;
     legend.innerHTML = `
-        <div style="font-weight: 600; margin-bottom: 4px; color: #AAA; font-size: 9px; text-transform: uppercase;">Ownership</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1px 6px; margin-bottom: 6px;">
-            <div style="white-space: nowrap;"><span style="color: #3D5C47">■</span> Occupied</div>
-            <div style="white-space: nowrap;"><span style="color: #6B4D4D">■</span> Abandoned</div>
-            <div style="white-space: nowrap;"><span style="color: #3D4D5C">■</span> For Sale</div>
-            <div style="white-space: nowrap;"><span style="color: #4A4A4A">■</span> Empty</div>
+        <div style="margin-bottom: 8px;">
+            <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 4px;">Lots</div>
+            <div style="display: flex; gap: 10px; flex-wrap: nowrap;">
+                <span><span style="color: #5A8A6A">■</span> Occupied</span>
+                <span><span style="color: #8A6A6A">■</span> Abandoned</span>
+                <span><span style="color: #5A6A8A">■</span> ForSale</span>
+                <span><span style="color: #6A6A6A">■</span> Empty</span>
+            </div>
         </div>
-        <div style="border-top: 1px solid #333; margin: 5px 0;"></div>
-        <div style="font-weight: 600; margin-bottom: 4px; color: #AAA; font-size: 9px; text-transform: uppercase;">Entities</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1px 6px;">
-            <div style="white-space: nowrap;"><span style="color: #22CC66">●</span> Resident</div>
-            <div style="white-space: nowrap;"><span style="color: #FFAA33">●</span> Tourist</div>
-            <div style="white-space: nowrap;"><span style="color: #3366FF">●</span> Police</div>
-            <div style="white-space: nowrap;"><span style="color: #CC3333">●</span> Vehicle</div>
+        <div>
+            <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 4px;">People & Cars</div>
+            <div style="display: flex; gap: 8px; flex-wrap: nowrap;">
+                <span><span style="color: #22CC66">●</span> Resident</span>
+                <span><span style="color: #FFAA33">●</span> Tourist</span>
+                <span><span style="color: #CC3333">■</span> Local Car</span>
+                <span><span style="color: #4ECDC4">■</span> Tourist Car</span>
+            </div>
         </div>
     `;
     document.body.appendChild(legend);
@@ -140,26 +143,71 @@ async function init() {
     // Interaction
     const interactionSystem = new InteractionSystem(camera, scene);
 
+    // Subscribe to follow events
+    interactionSystem.onFollow((target) => {
+        followTarget = target;
+        if (target) {
+            // Store current camera offset from target
+            followOffset.copy(camera.position).sub(target.position);
+            followOffset.y = Math.max(50, followOffset.y); // Keep camera above
+        }
+    });
+
+    // Escape key to unfollow
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && followTarget) {
+            followTarget = null;
+            console.log('Camera unfollowed');
+        }
+    });
+
+    // Follow indicator UI
+    const followIndicator = document.createElement('div');
+    followIndicator.style.cssText = `
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.8);
+        color: #4db8ff;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-family: system-ui, sans-serif;
+        font-size: 12px;
+        display: none;
+        z-index: 100;
+    `;
+    followIndicator.innerHTML = '📍 Following - Press <kbd style="background:#333;padding:2px 6px;border-radius:3px;">ESC</kbd> to stop';
+    document.body.appendChild(followIndicator);
+
+    // Neutral grey material for when status overlay is off
+    const neutralLotMaterial = new THREE.MeshStandardMaterial({
+        color: 0x606060,
+        roughness: 0.8,
+        metalness: 0.0,
+    });
+
     // Overlay Menu
     const overlayMenu = new OverlayMenu({
         onChange: (overlay: OverlayType, enabled: boolean) => {
             console.log(`Overlay ${overlay}: ${enabled ? 'ON' : 'OFF'}`);
-            // Status overlay controls lot visibility (fill + borders)
+            // Status overlay controls lot coloring (colored vs grey)
             if (overlay === 'status') {
                 worldRenderer.group.children.forEach(child => {
                     // Check if this is a lot mesh (has userData.type === 'lot')
                     if (child instanceof THREE.Mesh && child.userData?.type === 'lot') {
-                        child.visible = enabled;
-                    }
-                    // Also toggle the border boxes (check for BoxGeometry border segments)
-                    if (child instanceof THREE.Mesh && child.geometry instanceof THREE.BoxGeometry) {
-                        // Border segments have small height (~5) and thin depth (~1)
-                        const params = child.geometry.parameters;
-                        if (params && params.height === 5 && params.depth === 1) {
-                            child.visible = enabled;
+                        if (enabled) {
+                            // Restore original material based on lot state
+                            const lot = child.userData.data;
+                            child.material = worldRenderer.getLotMaterialPublic(lot);
+                        } else {
+                            // Use neutral grey
+                            child.material = neutralLotMaterial;
                         }
                     }
                 });
+                // Toggle minimap mode: overlay when enabled, grid when disabled
+                minimap.setMode(enabled ? 'overlay' : 'grid');
             }
         }
     });
@@ -181,55 +229,51 @@ async function init() {
     timeFolder.add(timeDisplay, 'str').name('Clock').disable().listen();
 
     const simFolder = gui.addFolder('Simulation');
-    const simConfig = { carCount: 30, peopleCount: 20 };
-    simFolder.add(simConfig, 'carCount', 0, 100).name('Cars').onFinishChange(spawnEntities);
-    simFolder.add(simConfig, 'peopleCount', 0, 100).name('People').onFinishChange(spawnEntities);
+    const simConfig = { residentCount: 250, touristCount: 30 };
+    simFolder.add(simConfig, 'residentCount', 0, 500).name('Residents').onFinishChange(spawnPopulation);
+    simFolder.add(simConfig, 'touristCount', 0, 100).name('Tourists').onFinishChange(spawnPopulation);
 
     // --- 4. Logic ---
-    function spawnEntities() {
+    let populationSystem: PopulationSystem;
+
+    function spawnPopulation() {
+        if (!populationSystem) return;
+
         // Clear existing
-        agents.forEach(a => worldRenderer.group.remove(a.mesh));
+        agents.forEach(a => {
+            worldRenderer.group.remove(a.mesh);
+            if (a instanceof Vehicle && a.carGroup) {
+                worldRenderer.group.remove(a.carGroup);
+            }
+        });
         agents.length = 0;
 
-        spawnVehicles(simConfig.carCount);
-        spawnPedestrians(simConfig.peopleCount);
-    }
+        const pop = populationSystem.populate({
+            residentCount: simConfig.residentCount,
+            touristCount: simConfig.touristCount
+        });
 
-    function spawnVehicles(count: number) {
-        for (let i = 0; i < count; i++) {
-            const pos = pathSystem.getRandomPointOnRoad();
-            const v = new Vehicle({
-                id: `car_${i}`,
-                type: AgentType.RESIDENT, // Placeholder
-                position: pos,
-                speed: 50 + Math.random() * 50,
-                color: Math.random() < 0.5 ? 0xff0000 : 0xcc0000 // Redish cars
-            });
+        // Add residents to scene
+        pop.residents.forEach(r => {
+            agents.push(r);
+            worldRenderer.group.add(r.mesh);
+        });
+
+        // Add tourists to scene (position them on roads)
+        pop.tourists.forEach(t => {
+            t.position.copy(pathSystem.getRandomPointOnRoad());
+            t.updateMesh();
+            agents.push(t);
+            worldRenderer.group.add(t.mesh);
+        });
+
+        // Add vehicles to scene
+        pop.vehicles.forEach(v => {
+            v.position.copy(pathSystem.getRandomPointOnRoad());
+            v.updateMesh();
             agents.push(v);
-            worldRenderer.group.add(v.mesh);
-        }
-    }
-
-    function spawnPedestrians(count: number) {
-        for (let i = 0; i < count; i++) {
-            const pos = pathSystem.getRandomPointOnRoad(); // Walk on roads for now
-            // Random Type
-            const rand = Math.random();
-            let type = AgentType.RESIDENT;
-            if (rand > 0.6) type = AgentType.TOURIST;
-            if (rand > 0.9) type = AgentType.COP;
-            if (rand > 0.95) type = AgentType.DOG;
-            if (rand > 0.98) type = AgentType.CAT;
-
-            const agent = new Agent({
-                id: `ped_${i}`,
-                type: type,
-                position: pos,
-                speed: 10 + Math.random() * 5, // Slower
-            });
-            agents.push(agent);
-            worldRenderer.group.add(agent.mesh);
-        }
+            worldRenderer.group.add(v.carGroup);
+        });
     }
 
     try {
@@ -241,9 +285,20 @@ async function init() {
         worldRenderer.render(world);
         minimap.setWorld(world);
 
+        // Apply initial clean state (no overlays active)
+        worldRenderer.group.children.forEach(child => {
+            if (child instanceof THREE.Mesh && child.userData?.type === 'lot') {
+                child.material = neutralLotMaterial;
+            }
+        });
+        minimap.setMode('grid');
+
         pathSystem = new PathfindingSystem(world.roads);
         pathSystem.computeAccessPoints(world.lots);
-        spawnEntities();
+
+        // Initialize population system
+        populationSystem = new PopulationSystem(world.lots);
+        spawnPopulation();
 
     } catch (error) {
         console.error('Error loading map:', error);
@@ -274,6 +329,17 @@ async function init() {
                 pathSystem.updateTraffic(agents, delta * timeScale);
                 agents.forEach(a => a.update(delta * timeScale));
             }
+        }
+
+        // Camera follow logic
+        if (followTarget) {
+            followIndicator.style.display = 'block';
+            // Smoothly move camera to follow target
+            const targetPos = followTarget.position.clone().add(followOffset);
+            camera.position.lerp(targetPos, 0.05);
+            controls.target.lerp(followTarget.position, 0.05);
+        } else {
+            followIndicator.style.display = 'none';
         }
 
         controls.update();

@@ -22,10 +22,13 @@ export class Agent {
     position: THREE.Vector3;
     target: THREE.Vector3 | null = null;
     speed: number;
+    currentSpeed: number = 0; // Actual current speed (for acceleration)
     mesh: THREE.Mesh;
     meshHeight: number; // Store height for Y offset calculation
     recentPath: THREE.Vector3[] = []; // Buffer for recent movement history
     path: THREE.Vector3[] = []; // Future path from pathfinding
+    targetRotation: number = 0; // Target Y rotation
+    rotationSpeed: number = 5; // How fast to turn (radians per second)
 
     constructor(config: AgentConfig) {
         this.id = config.id;
@@ -74,25 +77,43 @@ export class Agent {
 
     update(delta: number) {
         if (this.target) {
-            // Track history periodically or on move?
-            // Simple: just push current pos? Too many points.
-            // Push only if moved > threshold?
+            // Track history periodically
             if (this.recentPath.length === 0 || this.position.distanceTo(this.recentPath[this.recentPath.length - 1]) > 5) {
                 this.recentPath.push(this.position.clone());
-                if (this.recentPath.length > 50) this.recentPath.shift(); // Keep last 50 points
+                if (this.recentPath.length > 50) this.recentPath.shift();
             }
 
             const direction = new THREE.Vector3().subVectors(this.target, this.position);
+            direction.y = 0; // Keep movement horizontal
             const dist = direction.length();
 
-            if (dist < 0.5) {
+            if (dist < 2) {
                 this.position.copy(this.target);
                 this.target = null;
+                this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 2 * delta); // Decelerate
             } else {
+                // Calculate target rotation based on movement direction
+                this.targetRotation = Math.atan2(direction.x, direction.z);
+
+                // Smoothly interpolate rotation
+                let rotationDiff = this.targetRotation - this.mesh.rotation.y;
+                // Normalize to -PI to PI
+                while (rotationDiff > Math.PI) rotationDiff -= Math.PI * 2;
+                while (rotationDiff < -Math.PI) rotationDiff += Math.PI * 2;
+
+                this.mesh.rotation.y += rotationDiff * Math.min(1, this.rotationSpeed * delta);
+
+                // Accelerate toward target speed
+                this.currentSpeed = Math.min(this.speed, this.currentSpeed + this.speed * 2 * delta);
+
+                // Move forward
                 direction.normalize();
-                this.position.add(direction.multiplyScalar(this.speed * delta));
+                this.position.add(direction.multiplyScalar(this.currentSpeed * delta));
             }
             this.updateMesh();
+        } else {
+            // No target - decelerate
+            this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 3 * delta);
         }
     }
 

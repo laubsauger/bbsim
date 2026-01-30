@@ -29,7 +29,7 @@ export class OverlayMenu {
     constructor(config: OverlayMenuConfig = {}) {
         this.onChange = config.onChange;
         this.state = {
-            status: true,  // Default on
+            status: false,  // Default off for clean view
             prices: false,
             noise: false,
             pollution: false,

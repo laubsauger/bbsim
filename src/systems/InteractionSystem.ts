@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { Lot, LotState, AgentType } from '../types';
 import { Inspector } from '../ui/Inspector';
 
+export type FollowCallback = (target: THREE.Object3D | null) => void;
+
 export class InteractionSystem {
     raycaster: THREE.Raycaster;
     pointer: THREE.Vector2;
@@ -11,6 +13,8 @@ export class InteractionSystem {
     scene: THREE.Scene;
     pathLine?: THREE.Line;
     tooltip: HTMLDivElement;
+
+    private onFollowCallbacks: FollowCallback[] = [];
 
     constructor(camera: THREE.Camera, scene: THREE.Scene) {
         this.camera = camera;
@@ -73,18 +77,24 @@ export class InteractionSystem {
                 if (hit) {
                     this.inspector.show(hit.userData);
                     // Visualize Path if agent
-                    if (hit.userData.type === 'agent' || hit.userData.type === 'vehicle') {
+                    if (hit.userData.type === 'agent' || hit.userData.type === 'vehicle' || hit.userData.type === 'resident') {
                         this.showAgentPath(hit.userData.data);
+                        // Emit follow event with the mesh
+                        const targetMesh = hit.userData.type === 'vehicle' ? hit.userData.data.carGroup : hit.userData.data.mesh;
+                        this.emitFollow(targetMesh);
                     } else {
                         this.clearPath();
+                        this.emitFollow(null);
                     }
                 } else {
                     this.inspector.hide();
                     this.clearPath();
+                    this.emitFollow(null);
                 }
             } else {
                 this.inspector.hide();
                 this.clearPath();
+                this.emitFollow(null);
             }
         });
     }
@@ -130,11 +140,23 @@ export class InteractionSystem {
                         `);
                     } else if (data.type === 'vehicle') {
                         const vehicle = data.data;
+                        const isTourist = vehicle.isTouristCar;
+                        const hasDriver = vehicle.driver !== null;
                         hits.push(`
                             <div style="margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px;">
-                                <strong style="color: #E85050">🚗 VEHICLE</strong><br>
-                                ID: ${vehicle.id}<br>
-                                Speed: ${Math.round(vehicle.speed)}
+                                <strong style="color: ${isTourist ? '#FFB347' : '#E85050'}">${isTourist ? '🚗 TOURIST CAR' : '🚗 RESIDENT CAR'}</strong><br>
+                                ${hasDriver ? `Driver: ${vehicle.driver.fullName || vehicle.driver.id}` : 'Parked'}<br>
+                                Speed: ${Math.round(vehicle.currentSpeed || 0)}/${Math.round(vehicle.speed)}
+                            </div>
+                        `);
+                    } else if (data.type === 'resident') {
+                        const resident = data.data;
+                        hits.push(`
+                            <div style="margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px;">
+                                <strong style="color: #50C878">🏠 ${resident.fullName}</strong><br>
+                                Age: ${resident.data.age} | ${resident.data.occupation}<br>
+                                ${resident.data.hasCar ? '🚗 Has car' : '🚶 No car'}<br>
+                                ${resident.isHome ? 'At home' : 'Out'}
                             </div>
                         `);
                     } else if (data.type === 'agent') {
@@ -212,6 +234,14 @@ export class InteractionSystem {
             default:
                 return { label: 'UNKNOWN', color: '#888888' };
         }
+    }
+
+    onFollow(callback: FollowCallback) {
+        this.onFollowCallbacks.push(callback);
+    }
+
+    private emitFollow(target: THREE.Object3D | null) {
+        this.onFollowCallbacks.forEach(cb => cb(target));
     }
 }
 

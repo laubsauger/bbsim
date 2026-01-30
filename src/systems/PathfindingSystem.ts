@@ -134,44 +134,38 @@ export class PathfindingSystem {
 
     updateTraffic(agents: any[], delta: number) {
         agents.forEach(agent => {
-            // Initialize path if needed
-            if (!agent.path || agent.path.length === 0) {
-                if (!agent.target) {
-                    agent.target = this.getRandomPointOnRoad();
-                }
+            // If no path and no target, pick a new destination
+            if ((!agent.path || agent.path.length === 0) && !agent.target) {
+                // Pick a random destination on the road network
+                const destination = this.getRandomPointOnRoad();
 
-                // Calculate path from current pos to target
-                const start = { x: agent.mesh.position.x, y: -agent.mesh.position.z }; // World to Logical
-                const end = { x: agent.target.x, y: -agent.target.z };
+                // Get current position in SVG coordinates
+                const currentSvgX = agent.position.x;
+                const currentSvgY = -agent.position.z;
 
-                const points = this.graph.findPath(start, end);
-                if (points.length > 0) {
-                    // Convert back to 3D world points
-                    agent.path = points.map(p => new THREE.Vector3(p.x, 1, -p.y));
+                // Find path using road graph
+                const pathPoints = this.graph.findPath(
+                    { x: currentSvgX, y: currentSvgY },
+                    { x: destination.x, y: -destination.z }
+                );
+
+                if (pathPoints.length > 1) {
+                    // Convert path points to 3D and set as waypoints
+                    // Skip first point (current position)
+                    agent.path = pathPoints.slice(1).map(p => new THREE.Vector3(p.x, 1, -p.y));
                 } else {
-                    // Fallback: just go straight to target if no graph path (e.g. short distance)
-                    agent.path = [agent.target.clone()];
+                    // No path found or too close - just set direct target
+                    agent.path = [destination.clone()];
                 }
             }
 
-            // Move along path
-            if (agent.path.length > 0) {
-                const nextPoint = agent.path[0];
-                const dist = agent.mesh.position.distanceTo(nextPoint);
-
-                if (dist < 5) { // Reached waypoint
-                    agent.path.shift();
-                } else {
-                    // Orientation
-                    agent.mesh.lookAt(nextPoint);
-                    // Movement handled by agent.update(delta) based on rotation
-                    // But we need to ensure agent moves FORWARD.
-                    // The simple Agent class moves tx manually? 
-                    // Let's assume Agent.update moves forward.
-                    // Actually, Agent update logic handles position update based on speed/rotation?
-                    // Let's check Agent class later. For now, assume this lookAt is sufficient direction.
-                }
+            // Process path - set next waypoint as target
+            if (agent.path && agent.path.length > 0 && !agent.target) {
+                agent.target = agent.path.shift();
             }
+
+            // When target is reached, it will be cleared by Agent.update()
+            // and next iteration will pick up the next waypoint from path
         });
     }
 }

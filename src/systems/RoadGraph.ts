@@ -15,31 +15,124 @@ export class RoadGraph {
     }
 
     private buildGraph(roads: RoadSegment[]) {
+        const nodeSpacing = 50; // Add nodes every 50 units along roads
+
+        // For each road, create nodes along its centerline
         roads.forEach(road => {
-            // Derive centerline endpoints based on orientation
-            let start: Point;
-            let end: Point;
+            const nodesOnRoad: Point[] = [];
 
             if (road.type === 'vertical') {
-                // Vertical: Center X, Bottom Y to Top Y
                 const cx = road.x + road.width / 2;
-                start = { x: cx, y: road.y };
-                end = { x: cx, y: road.y + road.height };
+                const startY = road.y;
+                const endY = road.y + road.height;
+                const length = endY - startY;
+                const numSegments = Math.max(1, Math.ceil(length / nodeSpacing));
+
+                for (let i = 0; i <= numSegments; i++) {
+                    const y = startY + (length * i / numSegments);
+                    nodesOnRoad.push({ x: cx, y });
+                }
             } else {
-                // Horizontal: Left X to Right X, Center Y
                 const cy = road.y + road.height / 2;
-                start = { x: road.x, y: cy };
-                end = { x: road.x + road.width, y: cy };
+                const startX = road.x;
+                const endX = road.x + road.width;
+                const length = endX - startX;
+                const numSegments = Math.max(1, Math.ceil(length / nodeSpacing));
+
+                for (let i = 0; i <= numSegments; i++) {
+                    const x = startX + (length * i / numSegments);
+                    nodesOnRoad.push({ x, y: cy });
+                }
             }
 
-            const startId = this.getNodeId(start);
-            const endId = this.getNodeId(end);
-
-            this.addNode(start);
-            this.addNode(end);
-
-            this.addEdge(startId, endId);
+            // Add nodes and connect them sequentially
+            nodesOnRoad.forEach(p => this.addNode(p));
+            for (let i = 0; i < nodesOnRoad.length - 1; i++) {
+                this.addEdge(this.getNodeId(nodesOnRoad[i]), this.getNodeId(nodesOnRoad[i + 1]));
+            }
         });
+
+        // Find intersections between roads and connect them
+        for (let i = 0; i < roads.length; i++) {
+            for (let j = i + 1; j < roads.length; j++) {
+                const r1 = roads[i];
+                const r2 = roads[j];
+
+                if (r1.type !== r2.type) {
+                    const vert = r1.type === 'vertical' ? r1 : r2;
+                    const horiz = r1.type === 'horizontal' ? r1 : r2;
+
+                    const vertX = vert.x + vert.width / 2;
+                    const horizY = horiz.y + horiz.height / 2;
+
+                    const inVertRange = horizY >= vert.y && horizY <= vert.y + vert.height;
+                    const inHorizRange = vertX >= horiz.x && vertX <= horiz.x + horiz.width;
+
+                    if (inVertRange && inHorizRange) {
+                        const intersection: Point = { x: vertX, y: horizY };
+                        this.addNode(intersection);
+                        const intersectionId = this.getNodeId(intersection);
+
+                        // Connect to nearest nodes on both roads
+                        this.connectToNearestOnRoad(intersectionId, vert);
+                        this.connectToNearestOnRoad(intersectionId, horiz);
+                    }
+                }
+            }
+        }
+
+        // Connect nodes that are very close (road junctions)
+        const snapDistance = 30;
+        const nodeArray = Array.from(this.nodes.values());
+        for (let i = 0; i < nodeArray.length; i++) {
+            for (let j = i + 1; j < nodeArray.length; j++) {
+                const n1 = nodeArray[i];
+                const n2 = nodeArray[j];
+                const dist = Math.sqrt((n1.x - n2.x) ** 2 + (n1.y - n2.y) ** 2);
+                if (dist < snapDistance && dist > 0) {
+                    this.addEdge(n1.id, n2.id);
+                }
+            }
+        }
+    }
+
+    private connectToNearestOnRoad(nodeId: string, road: RoadSegment) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return;
+
+        // Find the two closest nodes that are on this road's centerline
+        let closest1: GraphNode | null = null;
+        let closest2: GraphNode | null = null;
+        let dist1 = Infinity;
+        let dist2 = Infinity;
+
+        const cx = road.type === 'vertical' ? road.x + road.width / 2 : null;
+        const cy = road.type === 'horizontal' ? road.y + road.height / 2 : null;
+
+        for (const n of this.nodes.values()) {
+            if (n.id === nodeId) continue;
+
+            // Check if node is on this road's centerline
+            const onRoad = road.type === 'vertical'
+                ? Math.abs(n.x - cx!) < 5 && n.y >= road.y && n.y <= road.y + road.height
+                : Math.abs(n.y - cy!) < 5 && n.x >= road.x && n.x <= road.x + road.width;
+
+            if (onRoad) {
+                const d = Math.sqrt((n.x - node.x) ** 2 + (n.y - node.y) ** 2);
+                if (d < dist1) {
+                    dist2 = dist1;
+                    closest2 = closest1;
+                    dist1 = d;
+                    closest1 = n;
+                } else if (d < dist2) {
+                    dist2 = d;
+                    closest2 = n;
+                }
+            }
+        }
+
+        if (closest1) this.addEdge(nodeId, closest1.id);
+        if (closest2) this.addEdge(nodeId, closest2.id);
     }
 
     private getNodeId(p: Point): string {

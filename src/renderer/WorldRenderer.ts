@@ -85,6 +85,10 @@ export class WorldRenderer {
         });
     }
 
+    public getLotMaterialPublic(lot: Lot): THREE.MeshStandardMaterial {
+        return this.getLotMaterial(lot);
+    }
+
     private getLotMaterial(lot: Lot): THREE.MeshStandardMaterial {
         // Determine base color from ownership status
         switch (lot.state) {
@@ -207,6 +211,7 @@ export class WorldRenderer {
     }
 
     private renderLots(lots: Lot[]) {
+        // First pass: render lot fills
         lots.forEach(lot => {
             if (lot.points.length === 0) return;
 
@@ -246,75 +251,85 @@ export class WorldRenderer {
             mesh.castShadow = true;
 
             this.group.add(mesh);
-
-            // Add border outline
-            this.renderLotBorder(lot, centerX, centerY, width, height);
         });
+
+        // Second pass: render unique lot borders (collapsed/deduplicated)
+        this.renderAllLotBorders(lots);
     }
 
-    private renderLotBorder(lot: Lot, centerX: number, centerY: number, width: number, height: number) {
-        const minX = Math.min(...lot.points.map(p => p.x));
-        const minY = Math.min(...lot.points.map(p => p.y));
+    private renderAllLotBorders(lots: Lot[]) {
+        // Collect all unique edges from all lots
+        const edgeSet = new Set<string>();
+        const edges: { x1: number; y1: number; x2: number; y2: number }[] = [];
 
-        // Create border using thin extruded boxes for visibility
-        const borderHeight = 5;  // Visible height
-        const borderThickness = 1;
-        const inset = 6;  // Inset from lot edge to prevent overlap with neighbors
+        // Helper to create normalized edge key
+        const edgeKey = (x1: number, y1: number, x2: number, y2: number) => {
+            // Round to avoid floating point issues
+            const rx1 = Math.round(x1);
+            const ry1 = Math.round(y1);
+            const rx2 = Math.round(x2);
+            const ry2 = Math.round(y2);
+            // Normalize so smaller point comes first
+            if (rx1 < rx2 || (rx1 === rx2 && ry1 < ry2)) {
+                return `${rx1},${ry1}-${rx2},${ry2}`;
+            }
+            return `${rx2},${ry2}-${rx1},${ry1}`;
+        };
 
-        // Inset the points towards the center
-        const centroidX = lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length;
-        const centroidY = lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length;
-
-        const points = lot.points.map(p => {
-            // Direction from point to centroid
-            const dx = centroidX - p.x;
-            const dy = centroidY - p.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            const nx = dx / dist;
-            const ny = dy / dist;
-
-            return {
-                x: (p.x + nx * inset) - minX - width / 2,
-                z: -((p.y + ny * inset) - minY - height / 2)
-            };
+        // Collect unique edges
+        lots.forEach(lot => {
+            if (lot.points.length < 2) return;
+            for (let i = 0; i < lot.points.length; i++) {
+                const p1 = lot.points[i];
+                const p2 = lot.points[(i + 1) % lot.points.length];
+                const key = edgeKey(p1.x, p1.y, p2.x, p2.y);
+                if (!edgeSet.has(key)) {
+                    edgeSet.add(key);
+                    edges.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+                }
+            }
         });
 
-        const material = this.getLotBorderMeshMaterial(lot);
+        // Create line geometry for all edges
+        const linePoints: THREE.Vector3[] = [];
+        edges.forEach(edge => {
+            // Convert SVG coords to 3D world coords
+            linePoints.push(new THREE.Vector3(edge.x1, 3, -edge.y1));
+            linePoints.push(new THREE.Vector3(edge.x2, 3, -edge.y2));
+        });
 
-        // Create segments between each pair of points
-        for (let i = 0; i < points.length; i++) {
-            const p1 = points[i];
-            const p2 = points[(i + 1) % points.length];
-
-            const dx = p2.x - p1.x;
-            const dz = p2.z - p1.z;
-            const length = Math.sqrt(dx * dx + dz * dz);
-            const angle = Math.atan2(dz, dx);
-
-            const segmentGeo = new THREE.BoxGeometry(length, borderHeight, borderThickness);
-            const segment = new THREE.Mesh(segmentGeo, material);
-
-            // Position at midpoint of segment
-            segment.position.set(
-                centerX + (p1.x + p2.x) / 2,
-                2 + borderHeight / 2,  // Raised above lot surface
-                -centerY + (p1.z + p2.z) / 2
-            );
-
-            // Rotate to align with segment direction
-            segment.rotation.y = -angle;
-
-            this.group.add(segment);
-        }
+        // Use LineSegments for efficient rendering of disconnected lines
+        const geometry = new THREE.BufferGeometry().setFromPoints(linePoints);
+        const material = new THREE.LineBasicMaterial({
+            color: 0x888888,
+            linewidth: 1,
+        });
+        const borderLines = new THREE.LineSegments(geometry, material);
+        borderLines.userData = { type: 'lot-borders' };
+        this.group.add(borderLines);
     }
 
     private renderRoads(segments: RoadSegment[]) {
+        // Add slight padding to roads to close micro-gaps with lot boundaries
+        const roadPadding = 2; // Extra padding on each side
+
         segments.forEach(seg => {
-            const geometry = new THREE.PlaneGeometry(seg.width, seg.height);
+            // Expand road dimensions to overlap with lot boundaries
+            const paddedWidth = seg.width + roadPadding * 2;
+            const paddedHeight = seg.height + roadPadding * 2;
+
+            const geometry = new THREE.PlaneGeometry(paddedWidth, paddedHeight);
             const mesh = new THREE.Mesh(geometry, this.materials.road);
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.set(seg.x + seg.width / 2, 0.5, -(seg.y + seg.height / 2));
+            // Offset position to account for padding (road expands equally on both sides)
+            mesh.position.set(
+                seg.x + seg.width / 2,  // Keep centered on original position
+                0.5,
+                -(seg.y + seg.height / 2)
+            );
             mesh.receiveShadow = true;
+            mesh.userData = { type: 'road', data: seg };
+            mesh.name = `Road ${seg.x},${seg.y}`;
             this.group.add(mesh);
         });
     }

@@ -46,17 +46,34 @@ export class Inspector {
                 <div><strong>Points:</strong> ${lot.points.length}</div>
             `;
         } else if (data.type === 'agent') {
-            const agent = data.data; // Agent Class
+            const agent = data.data;
             html += `
                 <div><strong>Type:</strong> ${agent.type}</div>
                 <div><strong>ID:</strong> ${agent.id}</div>
                 <div><strong>Speed:</strong> ${agent.speed.toFixed(1)}</div>
                 <div><strong>Pos:</strong> ${agent.mesh.position.x.toFixed(0)}, ${agent.mesh.position.z.toFixed(0)}</div>
             `;
-
             if (agent.target) {
                 html += `<div><strong>Target:</strong> ${agent.target.x.toFixed(0)}, ${agent.target.z.toFixed(0)}</div>`;
             }
+        } else if (data.type === 'vehicle') {
+            const vehicle = data.data;
+            html += `
+                <div><strong>Type:</strong> Vehicle</div>
+                <div><strong>ID:</strong> ${vehicle.id}</div>
+                <div><strong>Speed:</strong> ${vehicle.speed.toFixed(1)}</div>
+                <div><strong>Pos:</strong> ${vehicle.mesh.position.x.toFixed(0)}, ${vehicle.mesh.position.z.toFixed(0)}</div>
+            `;
+            if (vehicle.target) {
+                html += `<div><strong>Target:</strong> ${vehicle.target.x.toFixed(0)}, ${vehicle.target.z.toFixed(0)}</div>`;
+            }
+        } else if (data.type === 'road') {
+            const seg = data.data;
+            html += `
+                <div><strong>Type:</strong> Road</div>
+                <div><strong>Position:</strong> ${seg.x.toFixed(0)}, ${seg.y.toFixed(0)}</div>
+                <div><strong>Size:</strong> ${seg.width.toFixed(0)} x ${seg.height.toFixed(0)}</div>
+            `;
         }
 
         this.container.innerHTML = html;

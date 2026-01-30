@@ -273,8 +273,11 @@ export class Minimap {
         const y = e.clientY - rect.top;
 
         // Pixel -> World (SVG coordinates)
+        // X is straightforward
         const svgX = (x - this.offsetX) / this.scale + this.world.bounds.minX;
-        const svgY = (y - this.offsetY) / this.scale + this.world.bounds.minY;
+        // Y is flipped: screen Y=0 is at maxY, screen Y=height is at minY
+        const worldH = this.world.bounds.maxY - this.world.bounds.minY;
+        const svgY = this.world.bounds.minY + (worldH - (y - this.offsetY) / this.scale);
 
         // Convert to 3D world coordinates
         // In 3D: X = svgX (centered), Z = -svgY (inverted and centered)
@@ -362,6 +365,22 @@ export class Minimap {
 
     worldToScreenY(svgY: number): number {
         if (!this.world) return 0;
-        return this.offsetY + (svgY - this.world.bounds.minY) * this.scale;
+        // Flip Y-axis to match 3D world orientation (north = up in 3D, but SVG Y increases down)
+        const worldH = this.world.bounds.maxY - this.world.bounds.minY;
+        return this.offsetY + (worldH - (svgY - this.world.bounds.minY)) * this.scale;
+    }
+
+    setMode(mode: MinimapMode) {
+        if (this.mode !== mode) {
+            this.mode = mode;
+            if (this.modeToggle) {
+                this.modeToggle.textContent = mode === 'overlay' ? '◐' : '▦';
+            }
+            this.renderStaticBackground();
+        }
+    }
+
+    getMode(): MinimapMode {
+        return this.mode;
     }
 }
