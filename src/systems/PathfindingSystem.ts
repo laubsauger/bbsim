@@ -13,12 +13,12 @@ export class PathfindingSystem {
     }
 
     getRandomPointOnRoad(): THREE.Vector3 {
-        // ... (Keep existing simple random logic for now, or improve later)
         if (this.roads.length === 0) return new THREE.Vector3();
         const road = this.roads[Math.floor(Math.random() * this.roads.length)];
         const localX = road.x + Math.random() * road.width;
         const localY = road.y + Math.random() * road.height;
-        return new THREE.Vector3(localX, 1, -localY);
+        // Coordinate transform: SVG (x, y) → 3D (x, height, y)
+        return new THREE.Vector3(localX, 1, localY);
     }
 
     computeAccessPoints(lots: Lot[]) {
@@ -132,30 +132,147 @@ export class PathfindingSystem {
         };
     }
 
+    private debugLogCount = 0;
+
+    // Check if a point is on any road
+    isOnRoad(x: number, y: number): boolean {
+        const padding = 5; // Small tolerance
+        for (const road of this.roads) {
+            if (x >= road.x - padding && x <= road.x + road.width + padding &&
+                y >= road.y - padding && y <= road.y + road.height + padding) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Get nearest point on any road
+    getNearestRoadPoint(x: number, y: number): { x: number, y: number } {
+        let nearest = { x, y };
+        let minDist = Infinity;
+
+        for (const road of this.roads) {
+            // Clamp point to road bounds
+            const roadCenterX = road.x + road.width / 2;
+            const roadCenterY = road.y + road.height / 2;
+
+            let px: number, py: number;
+            if (road.type === 'vertical') {
+                px = roadCenterX;
+                py = Math.max(road.y, Math.min(y, road.y + road.height));
+            } else {
+                px = Math.max(road.x, Math.min(x, road.x + road.width));
+                py = roadCenterY;
+            }
+
+            const dist = Math.sqrt((px - x) ** 2 + (py - y) ** 2);
+            if (dist < minDist) {
+                minDist = dist;
+                nearest = { x: px, y: py };
+            }
+        }
+        return nearest;
+    }
+
     updateTraffic(agents: any[], delta: number) {
         agents.forEach(agent => {
+            // Skip vehicles that are parked (no driver)
+            if (agent.constructor.name === 'Vehicle' && !agent.driver) {
+                return;
+            }
+
             // If no path and no target, pick a new destination
             if ((!agent.path || agent.path.length === 0) && !agent.target) {
+                // Get current position in SVG coordinates
+                // 3D (x, y, z) → SVG (x, y): svgX = position.x, svgY = position.z
+                const currentSvgX = agent.position.x;
+                const currentSvgY = agent.position.z;
+
+                // Check if agent is currently on a road
+                const onRoad = this.isOnRoad(currentSvgX, currentSvgY);
+
+                let startPoint = { x: currentSvgX, y: currentSvgY };
+                const prePath: THREE.Vector3[] = [];
+
+                // If not on road, first go to nearest road point (or gate for residents)
+                if (!onRoad) {
+                    // Check if this is a resident with a home lot and gate
+                    const isResident = agent.data?.homeLot;
+                    let gatePoint: { x: number, y: number } | null = null;
+
+                    if (isResident && agent.data.homeLot.gatePositions?.length > 0) {
+                        // Find the closest gate on the resident's lot
+                        let minDist = Infinity;
+                        for (const gate of agent.data.homeLot.gatePositions) {
+                            const d = Math.sqrt(
+                                Math.pow(gate.x - currentSvgX, 2) +
+                                Math.pow(gate.y - currentSvgY, 2)
+                            );
+                            if (d < minDist) {
+                                minDist = d;
+                                gatePoint = gate;
+                            }
+                        }
+                    }
+
+                    if (gatePoint) {
+                        // Resident goes through their gate - SVG → 3D: (x, height, y)
+                        prePath.push(new THREE.Vector3(gatePoint.x, 1, gatePoint.y));
+                        startPoint = gatePoint;
+
+                        if (this.debugLogCount < 5) {
+                            console.log(`[Pathfinding] Resident ${agent.id} using gate at (${gatePoint.x.toFixed(0)}, ${gatePoint.y.toFixed(0)})`);
+                        }
+                    } else {
+                        // Non-resident or no gate: go to nearest road point
+                        const nearestRoad = this.getNearestRoadPoint(currentSvgX, currentSvgY);
+                        prePath.push(new THREE.Vector3(nearestRoad.x, 1, nearestRoad.y));
+                        startPoint = nearestRoad;
+
+                        if (this.debugLogCount < 5) {
+                            console.log(`[Pathfinding] Agent ${agent.id} not on road, going to nearest: (${nearestRoad.x.toFixed(0)}, ${nearestRoad.y.toFixed(0)})`);
+                        }
+                    }
+                }
+
                 // Pick a random destination on the road network
                 const destination = this.getRandomPointOnRoad();
 
-                // Get current position in SVG coordinates
-                const currentSvgX = agent.position.x;
-                const currentSvgY = -agent.position.z;
-
-                // Find path using road graph
+                // Find path using road graph from road point to destination
+                // destination is in 3D coords (x, y, z=svgY), convert back to SVG for pathfinding
                 const pathPoints = this.graph.findPath(
-                    { x: currentSvgX, y: currentSvgY },
-                    { x: destination.x, y: -destination.z }
+                    startPoint,
+                    { x: destination.x, y: destination.z }
                 );
 
+                // Debug logging (first 5 agents)
+                if (this.debugLogCount < 5) {
+                    console.log(`[Pathfinding] Agent ${agent.id}:`, {
+                        onRoad,
+                        from: { x: startPoint.x.toFixed(1), y: startPoint.y.toFixed(1) },
+                        to: { x: destination.x.toFixed(1), z: destination.z.toFixed(1) },
+                        pathLength: pathPoints.length,
+                        path: pathPoints.slice(0, 5).map(p => `(${p.x.toFixed(0)},${p.y.toFixed(0)})`)
+                    });
+                    this.debugLogCount++;
+                }
+
                 if (pathPoints.length > 1) {
-                    // Convert path points to 3D and set as waypoints
-                    // Skip first point (current position)
-                    agent.path = pathPoints.slice(1).map(p => new THREE.Vector3(p.x, 1, -p.y));
+                    // Combine pre-path (to road) with graph path
+                    // SVG → 3D: (x, 1, y)
+                    const graphPath = pathPoints.slice(1).map(p => new THREE.Vector3(p.x, 1, p.y));
+                    agent.path = [...prePath, ...graphPath];
+                } else if (prePath.length > 0) {
+                    // At least go to the road
+                    agent.path = prePath;
                 } else {
-                    // No path found or too close - just set direct target
-                    agent.path = [destination.clone()];
+                    // No path found - assign a random road point as fallback
+                    const fallback = this.getRandomPointOnRoad();
+                    agent.path = [fallback];
+                    if (this.debugLogCount < 5) {
+                        console.warn(`[Pathfinding] No path found for ${agent.id}, using fallback`);
+                        this.debugLogCount++;
+                    }
                 }
             }
 
@@ -163,9 +280,14 @@ export class PathfindingSystem {
             if (agent.path && agent.path.length > 0 && !agent.target) {
                 agent.target = agent.path.shift();
             }
-
-            // When target is reached, it will be cleared by Agent.update()
-            // and next iteration will pick up the next waypoint from path
         });
+    }
+
+    getDebugVisualization(): THREE.Group {
+        return this.graph.createDebugVisualization();
+    }
+
+    removeDebugVisualization() {
+        this.graph.removeDebugVisualization();
     }
 }

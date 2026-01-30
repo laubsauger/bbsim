@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { RoadSegment, Point } from "../types";
 
 interface GraphNode {
@@ -9,9 +10,11 @@ interface GraphNode {
 
 export class RoadGraph {
     nodes: Map<string, GraphNode> = new Map();
+    debugGroup: THREE.Group | null = null;
 
     constructor(roads: RoadSegment[]) {
         this.buildGraph(roads);
+        console.log(`[RoadGraph] Built graph with ${this.nodes.size} nodes`);
     }
 
     private buildGraph(roads: RoadSegment[]) {
@@ -256,5 +259,58 @@ export class RoadGraph {
 
     private dist(n1: GraphNode, n2: GraphNode): number {
         return Math.sqrt((n1.x - n2.x) ** 2 + (n1.y - n2.y) ** 2);
+    }
+
+    // Debug visualization
+    createDebugVisualization(): THREE.Group {
+        if (this.debugGroup) {
+            return this.debugGroup;
+        }
+
+        this.debugGroup = new THREE.Group();
+        this.debugGroup.name = 'RoadGraphDebug';
+
+        // Create spheres for nodes
+        const nodeMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const nodeGeometry = new THREE.SphereGeometry(5, 8, 8);
+
+        // Create lines for edges
+        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+        const drawnEdges = new Set<string>();
+
+        for (const node of this.nodes.values()) {
+            // Node sphere - convert SVG coords to 3D: (x, height, y)
+            const sphere = new THREE.Mesh(nodeGeometry, nodeMaterial);
+            sphere.position.set(node.x, 10, node.y);
+            this.debugGroup.add(sphere);
+
+            // Edges
+            for (const connId of node.connections) {
+                const edgeKey = [node.id, connId].sort().join('|');
+                if (drawnEdges.has(edgeKey)) continue;
+                drawnEdges.add(edgeKey);
+
+                const conn = this.nodes.get(connId);
+                if (!conn) continue;
+
+                const points = [
+                    new THREE.Vector3(node.x, 10, node.y),
+                    new THREE.Vector3(conn.x, 10, conn.y)
+                ];
+                const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(lineGeo, edgeMaterial);
+                this.debugGroup.add(line);
+            }
+        }
+
+        console.log(`[RoadGraph Debug] Created visualization: ${this.nodes.size} nodes, ${drawnEdges.size} edges`);
+        return this.debugGroup;
+    }
+
+    removeDebugVisualization() {
+        if (this.debugGroup && this.debugGroup.parent) {
+            this.debugGroup.parent.remove(this.debugGroup);
+        }
+        this.debugGroup = null;
     }
 }

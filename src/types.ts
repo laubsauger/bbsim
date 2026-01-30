@@ -26,6 +26,13 @@ export enum AgentType {
     CAT = 'cat'
 }
 
+export interface Address {
+    streetNumber: number;
+    streetName: string;      // e.g., "1st St"
+    crossStreet: string;     // e.g., "Ave A"
+    fullAddress: string;     // e.g., "1st St / Ave A"
+}
+
 export interface Lot {
     id: number;
     points: Point[];
@@ -38,6 +45,9 @@ export interface Lot {
     entryPoint?: Point; // Point just inside the lot boundary
     roadAccessPoint?: Point; // Point on the road graph nearest to entry
     gatePositions?: Point[]; // Fence gate positions on short road-facing sides
+
+    // Address
+    address?: Address;
 }
 
 export interface RoadSegment {

@@ -121,6 +121,14 @@ export class Minimap {
         this.renderStaticBackground();
     }
 
+    setVisible(visible: boolean) {
+        const display = visible ? 'block' : 'none';
+        this.canvas.style.display = display;
+        if (this.modeToggle) {
+            this.modeToggle.style.display = display;
+        }
+    }
+
     private renderStaticBackground() {
         if (!this.world) return;
 
@@ -272,17 +280,20 @@ export class Minimap {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 
-        // Pixel -> World (SVG coordinates)
-        // X is straightforward
-        const svgX = (x - this.offsetX) / this.scale + this.world.bounds.minX;
-        // Y is flipped: screen Y=0 is at maxY, screen Y=height is at minY
-        const worldH = this.world.bounds.maxY - this.world.bounds.minY;
-        const svgY = this.world.bounds.minY + (worldH - (y - this.offsetY) / this.scale);
+        // Pixel -> SVG coordinates (inverse of worldToScreen)
+        // worldToScreenX: screenX = offsetX + (svgX - minX) * scale
+        // Solving for svgX: svgX = minX + (screenX - offsetX) / scale
+        const svgX = this.world.bounds.minX + (x - this.offsetX) / this.scale;
+        // worldToScreenY: screenY = offsetY + (svgY - minY) * scale
+        // Solving for svgY: svgY = minY + (screenY - offsetY) / scale
+        const svgY = this.world.bounds.minY + (y - this.offsetY) / this.scale;
 
-        // Convert to 3D world coordinates
-        // In 3D: X = svgX (centered), Z = -svgY (inverted and centered)
-        const worldX = svgX - (this.world.bounds.minX + this.world.bounds.maxX) / 2;
-        const worldZ = -(svgY - (this.world.bounds.minY + this.world.bounds.maxY) / 2);
+        // Convert SVG to 3D world coordinates (centered)
+        // 3D transform: x = svgX - centerX, z = -(svgY - centerY)
+        const centerX = (this.world.bounds.minX + this.world.bounds.maxX) / 2;
+        const centerY = (this.world.bounds.minY + this.world.bounds.maxY) / 2;
+        const worldX = svgX - centerX;
+        const worldZ = -(svgY - centerY);  // Negate for 3D Z
 
         // Move camera and target
         const currentTarget = this.controls.target;
@@ -305,9 +316,10 @@ export class Minimap {
         // Draw agents
         agents.forEach(agent => {
             // Convert from 3D world to minimap
-            // Agent position: X = SVG x, Z = -SVG y (from PathfindingSystem)
+            // 3D transform: SVG (x, y) → 3D (x, height, -y)
+            // So: SVG.x = 3D.x, SVG.y = -3D.z
             const svgX = agent.position.x;
-            const svgY = -agent.position.z;
+            const svgY = -agent.position.z;  // Negate Z to get SVG Y
 
             const sx = this.worldToScreenX(svgX);
             const sy = this.worldToScreenY(svgY);
@@ -329,13 +341,14 @@ export class Minimap {
         });
 
         // Draw camera viewport
-        // Camera target is in centered 3D space, need to convert back to SVG
+        // Camera target is in centered 3D space
+        // 3D transform: x = svgX - centerX, z = -(svgY - centerY)
+        // So: svgX = centerX + x, svgY = centerY - z
         const centerX = (this.world.bounds.minX + this.world.bounds.maxX) / 2;
         const centerY = (this.world.bounds.minY + this.world.bounds.maxY) / 2;
 
-        // The world group is offset by -center, so camera target is relative to that
-        const camSvgX = this.controls.target.x + centerX;
-        const camSvgY = -this.controls.target.z + centerY;
+        const camSvgX = centerX + this.controls.target.x;
+        const camSvgY = centerY - this.controls.target.z;  // Negate Z
 
         const tx = this.worldToScreenX(camSvgX);
         const ty = this.worldToScreenY(camSvgY);
@@ -360,14 +373,14 @@ export class Minimap {
 
     worldToScreenX(svgX: number): number {
         if (!this.world) return 0;
+        // Direct mapping: lower X on left, higher X on right
         return this.offsetX + (svgX - this.world.bounds.minX) * this.scale;
     }
 
     worldToScreenY(svgY: number): number {
         if (!this.world) return 0;
-        // Flip Y-axis to match 3D world orientation (north = up in 3D, but SVG Y increases down)
-        const worldH = this.world.bounds.maxY - this.world.bounds.minY;
-        return this.offsetY + (worldH - (svgY - this.world.bounds.minY)) * this.scale;
+        // Direct mapping: lower Y at top (north), higher Y at bottom (south)
+        return this.offsetY + (svgY - this.world.bounds.minY) * this.scale;
     }
 
     setMode(mode: MinimapMode) {

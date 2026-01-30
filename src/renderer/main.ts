@@ -10,6 +10,7 @@ import { WorldRenderer } from './WorldRenderer';
 import { TimeSystem } from '../systems/TimeSystem';
 import { PathfindingSystem } from '../systems/PathfindingSystem';
 import { PopulationSystem } from '../systems/PopulationSystem';
+import { AddressSystem } from '../systems/AddressSystem';
 import { Vehicle } from '../entities/Vehicle';
 import { Agent } from '../entities/Agent';
 import { Resident } from '../entities/Resident';
@@ -17,6 +18,9 @@ import { MapData, AgentType } from '../types';
 import { Minimap } from './Minimap';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { OverlayMenu, OverlayType } from '../ui/OverlayMenu';
+import { EntityExplorer } from '../ui/EntityExplorer';
+import { SelectionHighlighter } from '../ui/SelectionHighlighter';
+import { Topbar, FocusMode } from '../ui/Topbar';
 
 async function init() {
     // --- 1. Systems Setup ---
@@ -24,6 +28,7 @@ async function init() {
     const world = new World();
     const agents: Agent[] = []; // Unified list
     let pathSystem: PathfindingSystem;
+    let addressSystem: AddressSystem;
 
     // --- 2. Graphics Setup ---
     const scene = new THREE.Scene();
@@ -31,8 +36,10 @@ async function init() {
     scene.fog = new THREE.Fog(0x111111, 5000, 15000); // Dark fog
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 50, 20000);
-    camera.position.set(0, 2000, 2000);
-    camera.lookAt(0, 0, 0);
+    // Position camera south of the world, looking north (World is 0-2000 in Z)
+    // Center is roughly (1000, 0, 1000)
+    camera.position.set(1000, 2000, 3500);  // South of the map (Z > 2000)
+    camera.lookAt(1000, 0, 1000);  // Look at map center
 
     // WebGPU Renderer
     const renderer = new WebGPURenderer({
@@ -54,10 +61,31 @@ async function init() {
     controls.dampingFactor = 0.05;
     controls.maxDistance = 10000;
     controls.minDistance = 50; // Allow closer zoom
+    controls.target.set(1000, 0, 1000);  // Match the camera lookAt target
 
     // Camera follow system
     let followTarget: THREE.Object3D | null = null;
-    let followOffset = new THREE.Vector3(0, 150, 150); // Offset from target
+    let followLastPos: THREE.Vector3 | null = null;
+    let followActive = false;
+    let pendingFollowTarget: THREE.Object3D | null = null;
+    let worldBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
+    const shoulderOffset = {
+        distance: 110,
+        height: 45,
+        side: 16,
+    };
+
+    const cameraJump = {
+        active: false,
+        startPos: new THREE.Vector3(),
+        endPos: new THREE.Vector3(),
+        startTarget: new THREE.Vector3(),
+        endTarget: new THREE.Vector3(),
+        elapsed: 0,
+        duration: 0.45,
+        onComplete: null as null | (() => void),
+        controlsWasEnabled: true,
+    };
 
     // Lights - warm desert sun with proper shadows
     // Ambient: low fill to prevent pure black shadows
@@ -100,6 +128,7 @@ async function init() {
     document.body.appendChild(stats.dom);
 
     const worldRenderer = new WorldRenderer(scene);
+    const selectionHighlighter = new SelectionHighlighter(worldRenderer.group);
 
     // Minimap
     const minimap = new Minimap(controls, camera);
@@ -143,20 +172,52 @@ async function init() {
     // Interaction
     const interactionSystem = new InteractionSystem(camera, scene);
 
+    // Entity Explorer
+    let focusMode: FocusMode = 'both';
+    const entityExplorer = new EntityExplorer({
+        onSelect: (entity) => {
+            const shouldJump = focusMode === 'jump' || focusMode === 'both';
+            const shouldFollow = focusMode === 'follow' || focusMode === 'both';
+            if (entity && shouldJump) {
+                jumpToEntity(entity);
+            }
+            interactionSystem.selectEntity(entity, { emitSelect: false, emitFollow: shouldFollow });
+        }
+    });
+
     // Subscribe to follow events
     interactionSystem.onFollow((target) => {
-        followTarget = target;
-        if (target) {
-            // Store current camera offset from target
-            followOffset.copy(camera.position).sub(target.position);
-            followOffset.y = Math.max(50, followOffset.y); // Keep camera above
+        if (!target) {
+            followTarget = null;
+            followLastPos = null;
+            followActive = false;
+            pendingFollowTarget = null;
+            return;
         }
+
+        if (followTarget !== target) {
+            followTarget = target;
+            followLastPos = null;
+            followActive = true;
+            if (cameraJump.active) {
+                pendingFollowTarget = target;
+            } else {
+                setShoulderCamera(target);
+            }
+        }
+    });
+
+    interactionSystem.onSelect((entity) => {
+        entityExplorer.setSelected(entity);
+        selectionHighlighter.setSelection(entity);
     });
 
     // Escape key to unfollow
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && followTarget) {
             followTarget = null;
+            followLastPos = null;
+            followActive = false;
             console.log('Camera unfollowed');
         }
     });
@@ -187,6 +248,11 @@ async function init() {
         metalness: 0.0,
     });
 
+    const state = {
+        paused: false,
+        timeSpeed: 60
+    };
+
     // Overlay Menu
     const overlayMenu = new OverlayMenu({
         onChange: (overlay: OverlayType, enabled: boolean) => {
@@ -209,29 +275,74 @@ async function init() {
                 // Toggle minimap mode: overlay when enabled, grid when disabled
                 minimap.setMode(enabled ? 'overlay' : 'grid');
             }
+            // Addresses overlay controls street name labels
+            if (overlay === 'addresses') {
+                if (enabled && addressSystem) {
+                    const labels = addressSystem.createStreetLabels();
+                    scene.add(labels);
+                } else if (addressSystem) {
+                    addressSystem.removeStreetLabels();
+                }
+            }
+        }
+    });
+
+    const topbar = new Topbar({
+        onToggleOverlay: (visible) => {
+            overlayMenu.container.style.display = visible ? 'flex' : 'none';
+        },
+        onToggleMinimap: (visible) => {
+            minimap.setVisible(visible);
+            legend.style.display = visible ? 'block' : 'none';
+        },
+        onToggleExplorer: (visible) => {
+            entityExplorer.setVisible(visible);
+        },
+        onToggleHighlights: (enabled) => {
+            selectionHighlighter.setEnabled(enabled);
+        },
+        onSpeedChange: (speed) => {
+            timeSystem.time.speed = speed;
+            state.timeSpeed = speed;
+        },
+        onFocusModeChange: (mode) => {
+            focusMode = mode;
         }
     });
 
     // --- 3. UI Setup ---
     const gui = new GUI();
-    const state = {
-        paused: false,
-        timeSpeed: 60
-    };
 
     const timeFolder = gui.addFolder('Time');
     timeFolder.add(state, 'timeSpeed', 0, 3600).name('Time Speed').onChange((v: number) => {
         timeSystem.time.speed = v;
+        topbar.setSpeed(v);
     });
     timeFolder.add(state, 'paused').name('Pause Simulation');
 
     const timeDisplay = { str: 'Day 1 08:00' };
     timeFolder.add(timeDisplay, 'str').name('Clock').disable().listen();
+    topbar.setTimeLabel(timeDisplay.str);
+    topbar.setSpeed(state.timeSpeed);
 
     const simFolder = gui.addFolder('Simulation');
     const simConfig = { residentCount: 250, touristCount: 30 };
     simFolder.add(simConfig, 'residentCount', 0, 500).name('Residents').onFinishChange(spawnPopulation);
     simFolder.add(simConfig, 'touristCount', 0, 100).name('Tourists').onFinishChange(spawnPopulation);
+
+    // Debug folder
+    const debugFolder = gui.addFolder('Debug');
+    const debugConfig = { showRoadGraph: false };
+    debugFolder.add(debugConfig, 'showRoadGraph').name('Show Road Graph').onChange((show: boolean) => {
+        if (show && pathSystem) {
+            const debugVis = pathSystem.getDebugVisualization();
+            worldRenderer.group.add(debugVis);  // Add to group for proper centering
+            console.log('[Debug] Road graph visualization enabled');
+        } else if (pathSystem) {
+            pathSystem.removeDebugVisualization();
+            console.log('[Debug] Road graph visualization disabled');
+        }
+    });
 
     // --- 4. Logic ---
     let populationSystem: PopulationSystem;
@@ -274,6 +385,15 @@ async function init() {
             agents.push(v);
             worldRenderer.group.add(v.carGroup);
         });
+
+        entityExplorer.setData({
+            residents: pop.residents,
+            vehicles: pop.vehicles,
+            lots: world.lots,
+            tourists: pop.tourists,
+        });
+
+        selectionHighlighter.setData(pop.residents, pop.vehicles, world.lots);
     }
 
     try {
@@ -284,6 +404,12 @@ async function init() {
         world.load(mapData);
         worldRenderer.render(world);
         minimap.setWorld(world);
+        worldBounds = {
+            minX: world.bounds.minX + worldRenderer.group.position.x,
+            maxX: world.bounds.maxX + worldRenderer.group.position.x,
+            minZ: world.bounds.minY + worldRenderer.group.position.z,
+            maxZ: world.bounds.maxY + worldRenderer.group.position.z,
+        };
 
         // Apply initial clean state (no overlays active)
         worldRenderer.group.children.forEach(child => {
@@ -295,6 +421,10 @@ async function init() {
 
         pathSystem = new PathfindingSystem(world.roads);
         pathSystem.computeAccessPoints(world.lots);
+
+        // Initialize address system
+        addressSystem = new AddressSystem(world.roads);
+        addressSystem.assignAddressesToLots(world.lots);
 
         // Initialize population system
         populationSystem = new PopulationSystem(world.lots);
@@ -320,6 +450,7 @@ async function init() {
         if (!state.paused) {
             timeSystem.update(delta);
             timeDisplay.str = timeSystem.getTimeString();
+            topbar.setTimeLabel(timeDisplay.str);
 
             if (pathSystem) {
                 // Scale movement by Time Speed
@@ -332,12 +463,35 @@ async function init() {
         }
 
         // Camera follow logic
-        if (followTarget) {
+        if (cameraJump.active) {
+            cameraJump.elapsed += delta;
+            const t = Math.min(1, cameraJump.elapsed / cameraJump.duration);
+            const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+            camera.position.lerpVectors(cameraJump.startPos, cameraJump.endPos, eased);
+            controls.target.lerpVectors(cameraJump.startTarget, cameraJump.endTarget, eased);
+            if (t >= 1) {
+                cameraJump.active = false;
+                controls.enabled = cameraJump.controlsWasEnabled;
+                if (pendingFollowTarget) {
+                    setShoulderCamera(pendingFollowTarget);
+                    pendingFollowTarget = null;
+                }
+                if (cameraJump.onComplete) cameraJump.onComplete();
+            }
+        }
+
+        if (followTarget && followActive && !cameraJump.active) {
             followIndicator.style.display = 'block';
-            // Smoothly move camera to follow target
-            const targetPos = followTarget.position.clone().add(followOffset);
-            camera.position.lerp(targetPos, 0.05);
-            controls.target.lerp(followTarget.position, 0.05);
+            const targetPos = new THREE.Vector3();
+            followTarget.getWorldPosition(targetPos);
+            if (!followLastPos) {
+                followLastPos = targetPos.clone();
+            } else {
+                const deltaMove = targetPos.clone().sub(followLastPos);
+                camera.position.add(deltaMove);
+                followLastPos.copy(targetPos);
+            }
+            controls.target.lerp(targetPos, 0.35);
         } else {
             followIndicator.style.display = 'none';
         }
@@ -353,10 +507,108 @@ async function init() {
 
         // Interaction
         interactionSystem.update([worldRenderer.group, ...agents.map(a => a.mesh)]);
+
+        // Selection highlight
+        selectionHighlighter.update(delta);
     }
 
     // Use setAnimationLoop for WebGPU/XR
     renderer.setAnimationLoop(animate);
+
+    function setShoulderCamera(target: THREE.Object3D) {
+        const targetPos = new THREE.Vector3();
+        target.getWorldPosition(targetPos);
+        const targetQuat = new THREE.Quaternion();
+        target.getWorldQuaternion(targetQuat);
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(targetQuat);
+        forward.y = 0;
+        if (forward.lengthSq() < 0.0001) {
+            forward.set(0, 0, 1);
+        }
+        forward.normalize();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+        const offset = forward.clone().multiplyScalar(-shoulderOffset.distance)
+            .add(new THREE.Vector3(0, shoulderOffset.height, 0))
+            .add(right.multiplyScalar(shoulderOffset.side));
+        camera.position.copy(clampCameraPosition(targetPos.clone().add(offset)));
+        controls.target.copy(targetPos);
+        followLastPos = targetPos.clone();
+    }
+
+    function jumpToEntity(entity: { type: string; data: any }) {
+        const targetPos = getEntityFocusPosition(entity);
+        const targetLook = targetPos.clone();
+        const cameraPos = clampCameraPosition(getEntityCameraPosition(entity, targetPos));
+
+        cameraJump.active = true;
+        cameraJump.elapsed = 0;
+        cameraJump.duration = 0.45;
+        cameraJump.startPos.copy(camera.position);
+        cameraJump.endPos.copy(cameraPos);
+        cameraJump.startTarget.copy(controls.target);
+        cameraJump.endTarget.copy(targetLook);
+        cameraJump.onComplete = null;
+        cameraJump.controlsWasEnabled = controls.enabled;
+        controls.enabled = false;
+    }
+
+    function getEntityFocusPosition(entity: { type: string; data: any }): THREE.Vector3 {
+        if (entity.type === 'lot') {
+            const lot = entity.data;
+            const centerX = lot.points.reduce((s: number, p: any) => s + p.x, 0) / lot.points.length;
+            const centerY = lot.points.reduce((s: number, p: any) => s + p.y, 0) / lot.points.length;
+            return new THREE.Vector3(centerX, 2, centerY).add(worldRenderer.group.position);
+        }
+        if (entity.type === 'vehicle') {
+            const pos = new THREE.Vector3();
+            entity.data.carGroup.getWorldPosition(pos);
+            return pos;
+        }
+        if (entity.type === 'resident' || entity.type === 'agent') {
+            const pos = new THREE.Vector3();
+            entity.data.mesh.getWorldPosition(pos);
+            return pos;
+        }
+        return new THREE.Vector3();
+    }
+
+    function getEntityCameraPosition(entity: { type: string; data: any }, targetPos: THREE.Vector3): THREE.Vector3 {
+        if (entity.type === 'lot') {
+            const lot = entity.data;
+            const radius = lot.points.reduce((max: number, point: any) => {
+                const dx = point.x - (targetPos.x - worldRenderer.group.position.x);
+                const dz = -point.y - (targetPos.z - worldRenderer.group.position.z);
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                return Math.max(max, dist);
+            }, 0);
+            const distance = 180 + radius * 0.6;
+            return targetPos.clone().add(new THREE.Vector3(0, 140 + radius * 0.18, distance));
+        }
+        const targetQuat = new THREE.Quaternion();
+        if (entity.data.mesh) {
+            entity.data.mesh.getWorldQuaternion(targetQuat);
+        } else if (entity.data.carGroup) {
+            entity.data.carGroup.getWorldQuaternion(targetQuat);
+        }
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(targetQuat);
+        forward.y = 0;
+        if (forward.lengthSq() < 0.0001) {
+            forward.set(0, 0, 1);
+        }
+        forward.normalize();
+        return targetPos.clone()
+            .add(forward.clone().multiplyScalar(-shoulderOffset.distance))
+            .add(new THREE.Vector3(0, shoulderOffset.height, 0));
+    }
+
+    function clampCameraPosition(position: THREE.Vector3): THREE.Vector3 {
+        if (!worldBounds) return position;
+        const padding = 250;
+        position.x = Math.max(worldBounds.minX - padding, Math.min(worldBounds.maxX + padding, position.x));
+        position.z = Math.max(worldBounds.minZ - padding, Math.min(worldBounds.maxZ + padding, position.z));
+        position.y = Math.max(20, position.y);
+        return position;
+    }
 }
 
 init();

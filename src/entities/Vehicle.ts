@@ -1,26 +1,17 @@
 import { Agent, AgentConfig } from "./Agent";
+import { AgentType } from '../types';
 import * as THREE from 'three';
 
-// Vehicle colors for variety
-const VEHICLE_COLORS = [
-    0xCC3333, // Red
-    0x3366CC, // Blue
-    0x339933, // Green
-    0xFFFFFF, // White
-    0x333333, // Black
-    0xCC9933, // Gold/tan
-    0x666666, // Gray
-];
-
-const TOURIST_CAR_COLORS = [
-    0xFF6B6B, // Coral red
-    0x4ECDC4, // Teal
-    0xFFE66D, // Yellow
-    0x95E1D3, // Mint
-];
+// Consistent car colors by owner type
+const CAR_COLORS = {
+    resident: 0xCC3333,  // Red - resident cars
+    tourist: 0x4ECDC4,   // Teal - tourist cars
+    police: 0x5B8DEE,    // Blue - police cars
+};
 
 export class Vehicle extends Agent {
     isTouristCar: boolean = false;
+    isPoliceCar: boolean = false;
     driver: Agent | null = null;
     passengers: Agent[] = [];
     carGroup: THREE.Group;
@@ -31,6 +22,7 @@ export class Vehicle extends Agent {
         super({ ...config, speed: config.speed * 2 }); // Cars are faster
 
         this.isTouristCar = isTourist;
+        this.isPoliceCar = config.type === AgentType.COP;
         this.rotationSpeed = 2.5;
 
         // Create car group
@@ -44,10 +36,15 @@ export class Vehicle extends Agent {
         const bodyHeight = 4;
         const bodyLength = 14;
 
-        // Car body (lower part)
-        const bodyColor = isTourist
-            ? TOURIST_CAR_COLORS[Math.floor(Math.random() * TOURIST_CAR_COLORS.length)]
-            : (config.color || VEHICLE_COLORS[Math.floor(Math.random() * VEHICLE_COLORS.length)]);
+        // Car body color based on owner type - consistent colors
+        let bodyColor: number;
+        if (this.isPoliceCar) {
+            bodyColor = CAR_COLORS.police;
+        } else if (isTourist) {
+            bodyColor = CAR_COLORS.tourist;
+        } else {
+            bodyColor = CAR_COLORS.resident;
+        }
 
         const bodyGeo = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyLength);
         const bodyMat = new THREE.MeshStandardMaterial({ color: bodyColor });
@@ -56,41 +53,56 @@ export class Vehicle extends Agent {
         bodyMesh.castShadow = true;
         this.carGroup.add(bodyMesh);
 
-        // Interior (darker, visible from above)
-        const interiorGeo = new THREE.BoxGeometry(bodyWidth - 1, 1, bodyLength - 2);
-        const interiorMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
-        const interiorMesh = new THREE.Mesh(interiorGeo, interiorMat);
-        interiorMesh.position.y = bodyHeight - 0.5;
-        this.carGroup.add(interiorMesh);
+        // Seat positions (2 front, 2 back) - visible from above as dark cutouts
+        const seatPositions = [
+            { x: 1.5, z: 2.5 },    // Driver (front right)
+            { x: -1.5, z: 2.5 },   // Front passenger (front left)
+            { x: 1.5, z: -2 },     // Back right
+            { x: -1.5, z: -2 },    // Back left
+        ];
 
-        // Driver seat position (visible person)
-        const seatGeo = new THREE.CylinderGeometry(1.2, 1.2, 3, 8);
-        const driverColor = isTourist ? 0xFFAA33 : 0x22CC66; // Orange for tourist, green for resident
-        const seatMat = new THREE.MeshStandardMaterial({ color: driverColor });
-        this.driverSeat = new THREE.Mesh(seatGeo, seatMat);
-        this.driverSeat.position.set(1.5, bodyHeight + 1.5, 2);
-        this.driverSeat.visible = false; // Hidden until driver enters
+        // Create seat cutouts (dark circles visible from above - empty seats)
+        const seatCutoutGeo = new THREE.CylinderGeometry(1.3, 1.3, 1, 12);
+        const seatCutoutMat = new THREE.MeshStandardMaterial({
+            color: 0x1a1a1a,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1
+        });
+
+        seatPositions.forEach(pos => {
+            const cutout = new THREE.Mesh(seatCutoutGeo, seatCutoutMat);
+            cutout.position.set(pos.x, bodyHeight - 0.3, pos.z);
+            this.carGroup.add(cutout);
+        });
+
+        // Occupant meshes (cylinders representing people sitting in seats)
+        const occupantGeo = new THREE.CylinderGeometry(1.1, 1.1, 3, 8);
+        // Occupant color matches car type
+        let occupantColor: number;
+        if (this.isPoliceCar) {
+            occupantColor = 0x3366FF; // Blue uniform for police
+        } else if (isTourist) {
+            occupantColor = 0xFFAA33; // Orange for tourist
+        } else {
+            occupantColor = 0x22CC66; // Green for resident
+        }
+        const occupantMat = new THREE.MeshStandardMaterial({ color: occupantColor });
+
+        // Driver seat (position 0)
+        this.driverSeat = new THREE.Mesh(occupantGeo, occupantMat);
+        this.driverSeat.position.set(seatPositions[0].x, bodyHeight + 1.2, seatPositions[0].z);
+        this.driverSeat.visible = false;
         this.carGroup.add(this.driverSeat);
 
-        // Passenger seat
-        const passengerSeat = new THREE.Mesh(seatGeo.clone(), seatMat.clone());
-        passengerSeat.position.set(-1.5, bodyHeight + 1.5, 2);
-        passengerSeat.visible = false;
-        this.passengerSeats.push(passengerSeat);
-        this.carGroup.add(passengerSeat);
-
-        // Back seats
-        const backSeat1 = new THREE.Mesh(seatGeo.clone(), seatMat.clone());
-        backSeat1.position.set(1.5, bodyHeight + 1.5, -3);
-        backSeat1.visible = false;
-        this.passengerSeats.push(backSeat1);
-        this.carGroup.add(backSeat1);
-
-        const backSeat2 = new THREE.Mesh(seatGeo.clone(), seatMat.clone());
-        backSeat2.position.set(-1.5, bodyHeight + 1.5, -3);
-        backSeat2.visible = false;
-        this.passengerSeats.push(backSeat2);
-        this.carGroup.add(backSeat2);
+        // Passenger seats (positions 1, 2, 3)
+        for (let i = 1; i < seatPositions.length; i++) {
+            const seat = new THREE.Mesh(occupantGeo.clone(), occupantMat.clone());
+            seat.position.set(seatPositions[i].x, bodyHeight + 1.2, seatPositions[i].z);
+            seat.visible = false;
+            this.passengerSeats.push(seat);
+            this.carGroup.add(seat);
+        }
 
         // Use group as the main mesh for positioning
         this.mesh = bodyMesh; // Keep reference for raycasting
@@ -98,7 +110,8 @@ export class Vehicle extends Agent {
 
         // Override userData
         this.mesh.userData = { type: 'vehicle', data: this };
-        this.mesh.name = `${isTourist ? 'Tourist' : 'Resident'} Vehicle ${this.id}`;
+        const ownerType = this.isPoliceCar ? 'Police' : (isTourist ? 'Tourist' : 'Resident');
+        this.mesh.name = `${ownerType} Vehicle ${this.id}`;
 
         this.updateMesh();
     }
@@ -131,13 +144,28 @@ export class Vehicle extends Agent {
         }
     }
 
+    update(delta: number) {
+        // Call parent update for movement logic
+        super.update(delta);
+        // Ensure carGroup is synced
+        this.updateMesh();
+    }
+
     updateMesh() {
-        // Position the car group
+        // Guard: carGroup may not exist when super() calls this during construction
+        if (!this.carGroup) return;
+
+        // Position the car group - this moves the entire vehicle including body and interior
         this.carGroup.position.set(
             this.position.x,
             this.position.y,
             this.position.z
         );
-        this.carGroup.rotation.y = this.mesh.rotation.y;
+
+        // Set rotation from the agent's target rotation
+        this.carGroup.rotation.y = this.targetRotation;
+
+        // Note: Don't modify this.mesh.position separately as it's a CHILD of carGroup
+        // The mesh already has its local position set in the constructor (bodyHeight/2)
     }
 }

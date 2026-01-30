@@ -1,8 +1,26 @@
 import * as THREE from 'three';
 import { Lot, LotState, AgentType } from '../types';
 import { Inspector } from '../ui/Inspector';
+import { ExplorerEntityRef } from '../ui/EntityExplorer';
 
 export type FollowCallback = (target: THREE.Object3D | null) => void;
+export type SelectCallback = (entity: ExplorerEntityRef | null) => void;
+
+// Consistent colors matching WorldRenderer
+const LOT_STATE_COLORS = {
+    occupied: '#5A8A6A',    // Green - matches WorldRenderer occupied
+    abandoned: '#8A6A6A',   // Dusty rose - matches WorldRenderer abandoned
+    forSale: '#5A6A8A',     // Blue-gray - matches WorldRenderer forSale
+    empty: '#6A6A6A',       // Gray - matches WorldRenderer empty
+    away: '#7A9A7A',        // Lighter green for away
+};
+
+// Car colors for tooltip display
+const CAR_COLORS = {
+    resident: '#CC3333',    // Red - resident cars
+    tourist: '#4ECDC4',     // Teal - tourist cars
+    police: '#5B8DEE',      // Blue - police cars
+};
 
 export class InteractionSystem {
     raycaster: THREE.Raycaster;
@@ -15,6 +33,7 @@ export class InteractionSystem {
     tooltip: HTMLDivElement;
 
     private onFollowCallbacks: FollowCallback[] = [];
+    private onSelectCallbacks: SelectCallback[] = [];
 
     constructor(camera: THREE.Camera, scene: THREE.Scene) {
         this.camera = camera;
@@ -61,7 +80,6 @@ export class InteractionSystem {
 
             const intersects = this.raycaster.intersectObjects(this.lastObjects, true);
             if (intersects.length > 0) {
-                // Find first meaningful object
                 let hit = null;
                 for (const i of intersects) {
                     let obj = i.object;
@@ -75,26 +93,12 @@ export class InteractionSystem {
                 }
 
                 if (hit) {
-                    this.inspector.show(hit.userData);
-                    // Visualize Path if agent
-                    if (hit.userData.type === 'agent' || hit.userData.type === 'vehicle' || hit.userData.type === 'resident') {
-                        this.showAgentPath(hit.userData.data);
-                        // Emit follow event with the mesh
-                        const targetMesh = hit.userData.type === 'vehicle' ? hit.userData.data.carGroup : hit.userData.data.mesh;
-                        this.emitFollow(targetMesh);
-                    } else {
-                        this.clearPath();
-                        this.emitFollow(null);
-                    }
+                    this.selectEntity(hit.userData);
                 } else {
-                    this.inspector.hide();
-                    this.clearPath();
-                    this.emitFollow(null);
+                    this.selectEntity(null);
                 }
             } else {
-                this.inspector.hide();
-                this.clearPath();
-                this.emitFollow(null);
+                this.selectEntity(null);
             }
         });
     }
@@ -131,20 +135,34 @@ export class InteractionSystem {
                     const data = obj.userData;
                     if (data.type === 'lot') {
                         const lot = data.data as Lot;
+                        const addressStr = lot.address ? lot.address.fullAddress : `Lot #${lot.id}`;
                         hits.push(`
                             <div style="margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px;">
-                                <strong style="color: #4db8ff">LOT #${lot.id}</strong><br>
+                                <strong style="color: #4db8ff">📍 ${addressStr}</strong><br>
                                 State: <span style="color: ${this.getStateColor(lot.state)}">${lot.state}</span><br>
                                 Usage: ${lot.usage || 'N/A'}
                             </div>
                         `);
                     } else if (data.type === 'vehicle') {
                         const vehicle = data.data;
+                        const isPoliceCar = vehicle.isPoliceCar;
                         const isTourist = vehicle.isTouristCar;
                         const hasDriver = vehicle.driver !== null;
+                        let carColor: string;
+                        let carLabel: string;
+                        if (isPoliceCar) {
+                            carColor = CAR_COLORS.police;
+                            carLabel = '🚔 POLICE CAR';
+                        } else if (isTourist) {
+                            carColor = CAR_COLORS.tourist;
+                            carLabel = '🚗 TOURIST CAR';
+                        } else {
+                            carColor = CAR_COLORS.resident;
+                            carLabel = '🚗 RESIDENT CAR';
+                        }
                         hits.push(`
                             <div style="margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px;">
-                                <strong style="color: ${isTourist ? '#FFB347' : '#E85050'}">${isTourist ? '🚗 TOURIST CAR' : '🚗 RESIDENT CAR'}</strong><br>
+                                <strong style="color: ${carColor}">${carLabel}</strong><br>
                                 ${hasDriver ? `Driver: ${vehicle.driver.fullName || vehicle.driver.id}` : 'Parked'}<br>
                                 Speed: ${Math.round(vehicle.currentSpeed || 0)}/${Math.round(vehicle.speed)}
                             </div>
@@ -155,8 +173,8 @@ export class InteractionSystem {
                             <div style="margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px;">
                                 <strong style="color: #50C878">🏠 ${resident.fullName}</strong><br>
                                 Age: ${resident.data.age} | ${resident.data.occupation}<br>
-                                ${resident.data.hasCar ? '🚗 Has car' : '🚶 No car'}<br>
-                                ${resident.isHome ? 'At home' : 'Out'}
+                                <span style="color: #aaa">📍 ${resident.address}</span><br>
+                                ${resident.data.hasCar ? '🚗 Has car' : '🚶 No car'} | ${resident.isHome ? 'At home' : 'Out'}
                             </div>
                         `);
                     } else if (data.type === 'agent') {
@@ -209,13 +227,14 @@ export class InteractionSystem {
         }
     }
 
-    // ... helper methods
+    // Helper methods using consistent colors
     getStateColor(state: LotState): string {
         switch (state) {
-            case LotState.OCCUPIED: return '#88cc88';
-            case LotState.ABANDONED: return '#cc8888';
-            case LotState.FOR_SALE: return '#8888cc';
-            default: return '#cccccc';
+            case LotState.OCCUPIED: return LOT_STATE_COLORS.occupied;
+            case LotState.AWAY: return LOT_STATE_COLORS.away;
+            case LotState.ABANDONED: return LOT_STATE_COLORS.abandoned;
+            case LotState.FOR_SALE: return LOT_STATE_COLORS.forSale;
+            default: return LOT_STATE_COLORS.empty;
         }
     }
 
@@ -243,5 +262,41 @@ export class InteractionSystem {
     private emitFollow(target: THREE.Object3D | null) {
         this.onFollowCallbacks.forEach(cb => cb(target));
     }
-}
 
+    onSelect(callback: SelectCallback) {
+        this.onSelectCallbacks.push(callback);
+    }
+
+    private emitSelect(entity: ExplorerEntityRef | null) {
+        this.onSelectCallbacks.forEach(cb => cb(entity));
+    }
+
+    selectEntity(entity: ExplorerEntityRef | null, options: { emitSelect?: boolean; emitFollow?: boolean } = {}) {
+        const emitSelect = options.emitSelect !== false;
+        const emitFollow = options.emitFollow !== false;
+
+        if (entity) {
+            this.inspector.show(entity);
+            if (entity.type === 'agent' || entity.type === 'vehicle' || entity.type === 'resident') {
+                this.showAgentPath(entity.data);
+                const targetMesh = entity.type === 'vehicle' ? entity.data.carGroup : entity.data.mesh;
+                if (emitFollow) {
+                    this.emitFollow(targetMesh);
+                } else {
+                    this.emitFollow(null);
+                }
+            } else {
+                this.clearPath();
+                this.emitFollow(null);
+            }
+        } else {
+            this.inspector.hide();
+            this.clearPath();
+            this.emitFollow(null);
+        }
+
+        if (emitSelect) {
+            this.emitSelect(entity);
+        }
+    }
+}

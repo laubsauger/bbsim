@@ -120,12 +120,14 @@ export class PopulationSystem {
         const centerX = lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length;
         const centerY = lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length;
 
-        return new THREE.Vector3(centerX, 2, -centerY);
+        // Coordinate transform: SVG (x, y) → 3D (x, height, y)
+        return new THREE.Vector3(centerX, 2, centerY);
     }
 
     private getNearestRoadPoint(lot: Lot): THREE.Vector3 {
         if (lot.roadAccessPoint) {
-            return new THREE.Vector3(lot.roadAccessPoint.x, 1, -lot.roadAccessPoint.y);
+            // Coordinate transform: SVG (x, y) → 3D (x, height, y)
+            return new THREE.Vector3(lot.roadAccessPoint.x, 1, lot.roadAccessPoint.y);
         }
         // Fallback to lot center
         return this.getLotCenter(lot);

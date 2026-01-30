@@ -27,6 +27,7 @@ const LOT_BORDER_COLORS = {
 export class WorldRenderer {
     scene: THREE.Scene;
     group: THREE.Group;
+    worldCenterOffset: THREE.Vector3 = new THREE.Vector3();
 
     // Materials
     materials: Record<string, THREE.MeshStandardMaterial> = {};
@@ -136,11 +137,14 @@ export class WorldRenderer {
         this.renderLots(world.lots);
         this.renderNorthIndicator(world);
 
-        // Center the group
+        // Center the group - compute center from the bounding box
         const box = new THREE.Box3().setFromObject(this.group);
         const center = box.getCenter(new THREE.Vector3());
         this.group.position.x = -center.x;
-        this.group.position.z = -center.y;
+        this.group.position.z = -center.z;
+
+        // Store the world center offset for entity positioning
+        this.worldCenterOffset = new THREE.Vector3(center.x, 0, center.z);
     }
 
     private renderGround(world: World) {
@@ -161,22 +165,23 @@ export class WorldRenderer {
         const groundMesh = new THREE.Mesh(ground, groundMaterial);
 
         groundMesh.rotation.x = -Math.PI / 2;
-        groundMesh.position.set(centerX, -5, -centerY);
+        // Coordinate transform: SVG (x, y) → 3D (x, height, y) - Matches SVG coordinates
+        groundMesh.position.set(centerX, -5, centerY);
         groundMesh.receiveShadow = true;
 
         this.group.add(groundMesh);
     }
 
     private renderNorthIndicator(world: World) {
-        // Add a north arrow at the top of the map
+        // Add a north arrow at the north edge of the map
         const arrowLength = 100;
         const arrowWidth = 30;
 
-        // Position at north edge of map
+        // Position at north edge of map (low Y in SVG = north)
         const northX = (world.bounds.minX + world.bounds.maxX) / 2;
-        const northY = world.bounds.minY - 50; // Above the map (remember Y is inverted)
+        const northY = world.bounds.minY - 50;
 
-        // Arrow shape pointing up (north in SVG coords)
+        // Arrow shape pointing north (away from camera in 3D, which is -Z direction)
         const arrowShape = new THREE.Shape();
         arrowShape.moveTo(0, arrowLength / 2);
         arrowShape.lineTo(-arrowWidth / 2, -arrowLength / 2);
@@ -189,16 +194,17 @@ export class WorldRenderer {
         const arrowMesh = new THREE.Mesh(arrowGeo, arrowMat);
 
         arrowMesh.rotation.x = -Math.PI / 2;
-        arrowMesh.position.set(northX, 5, -northY);
+        // Coordinate transform: SVG (x, y) → 3D (x, height, y)
+        arrowMesh.position.set(northX, 5, northY);
 
         this.group.add(arrowMesh);
 
         // "N" label
-        // Using a simple box as placeholder (proper text would need font loading)
         const labelGeo = new THREE.BoxGeometry(20, 2, 30);
         const labelMat = new THREE.MeshBasicMaterial({ color: 0xCC3333 });
         const labelMesh = new THREE.Mesh(labelGeo, labelMat);
-        labelMesh.position.set(northX, 6, -northY + 80);
+        // Position label north of arrow (lower Y/Z value)
+        labelMesh.position.set(northX, 6, northY - 80);
         this.group.add(labelMesh);
     }
 
@@ -224,7 +230,7 @@ export class WorldRenderer {
             const centerX = minX + width / 2;
             const centerY = minY + height / 2;
 
-            // Create shape centered at origin
+            // Create shape centered at origin (Standard orientation)
             const shape = new THREE.Shape();
             shape.moveTo(lot.points[0].x - minX - width / 2, lot.points[0].y - minY - height / 2);
             for (let i = 1; i < lot.points.length; i++) {
@@ -246,7 +252,8 @@ export class WorldRenderer {
             mesh.name = `Lot ${lot.id}`;
 
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.set(centerX, 1, -centerY);
+            // Coordinate transform: SVG (x, y) → 3D (x, height, y)
+            mesh.position.set(centerX, 1, centerY);
             mesh.receiveShadow = true;
             mesh.castShadow = true;
 
@@ -293,9 +300,9 @@ export class WorldRenderer {
         // Create line geometry for all edges
         const linePoints: THREE.Vector3[] = [];
         edges.forEach(edge => {
-            // Convert SVG coords to 3D world coords
-            linePoints.push(new THREE.Vector3(edge.x1, 3, -edge.y1));
-            linePoints.push(new THREE.Vector3(edge.x2, 3, -edge.y2));
+            // Convert SVG coords to 3D world coords: SVG (x, y) → 3D (x, height, y)
+            linePoints.push(new THREE.Vector3(edge.x1, 3, edge.y1));
+            linePoints.push(new THREE.Vector3(edge.x2, 3, edge.y2));
         });
 
         // Use LineSegments for efficient rendering of disconnected lines
@@ -321,11 +328,11 @@ export class WorldRenderer {
             const geometry = new THREE.PlaneGeometry(paddedWidth, paddedHeight);
             const mesh = new THREE.Mesh(geometry, this.materials.road);
             mesh.rotation.x = -Math.PI / 2;
-            // Offset position to account for padding (road expands equally on both sides)
+            // Coordinate transform: SVG (x, y) → 3D (x, height, y)
             mesh.position.set(
-                seg.x + seg.width / 2,  // Keep centered on original position
+                seg.x + seg.width / 2,
                 0.5,
-                -(seg.y + seg.height / 2)
+                seg.y + seg.height / 2
             );
             mesh.receiveShadow = true;
             mesh.userData = { type: 'road', data: seg };
