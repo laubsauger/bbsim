@@ -7,6 +7,8 @@ export interface TopbarConfig {
     onToggleHighlights?: (enabled: boolean) => void;
     onSpeedChange?: (speed: number) => void;
     onFocusModeChange?: (mode: FocusMode) => void;
+    onTrespassChange?: (chances: { resident: number; tourist: number; other: number }) => void;
+    onSidewalkOffsetChange?: (offset: number) => void;
 }
 
 export class Topbar {
@@ -18,7 +20,13 @@ export class Topbar {
     private minimapToggle: HTMLButtonElement;
     private explorerToggle: HTMLButtonElement;
     private highlightToggle: HTMLButtonElement;
+    private settingsToggle: HTMLButtonElement;
     private focusButtons: Map<FocusMode, HTMLButtonElement> = new Map();
+    private settingsPanel: HTMLDivElement;
+    private trespassInputs: Record<'resident' | 'tourist' | 'other', HTMLInputElement>;
+    private trespassValues: Record<'resident' | 'tourist' | 'other', HTMLSpanElement>;
+    private sidewalkInput: HTMLInputElement;
+    private sidewalkValue: HTMLSpanElement;
     private state = {
         overlayVisible: true,
         minimapVisible: true,
@@ -26,6 +34,8 @@ export class Topbar {
         highlightsEnabled: true,
         focusMode: 'both' as FocusMode,
         speed: 60,
+        trespass: { resident: 2, tourist: 1, other: 5 },
+        sidewalkOffset: 12,
     };
 
     private onToggleOverlay?: (visible: boolean) => void;
@@ -34,6 +44,8 @@ export class Topbar {
     private onToggleHighlights?: (enabled: boolean) => void;
     private onSpeedChange?: (speed: number) => void;
     private onFocusModeChange?: (mode: FocusMode) => void;
+    private onTrespassChange?: (chances: { resident: number; tourist: number; other: number }) => void;
+    private onSidewalkOffsetChange?: (offset: number) => void;
 
     constructor(config: TopbarConfig = {}) {
         this.onToggleOverlay = config.onToggleOverlay;
@@ -42,6 +54,8 @@ export class Topbar {
         this.onToggleHighlights = config.onToggleHighlights;
         this.onSpeedChange = config.onSpeedChange;
         this.onFocusModeChange = config.onFocusModeChange;
+        this.onTrespassChange = config.onTrespassChange;
+        this.onSidewalkOffsetChange = config.onSidewalkOffsetChange;
 
         this.container = document.createElement('div');
         this.container.className = 'topbar';
@@ -57,15 +71,38 @@ export class Topbar {
                 <div class="topbar__time">Time <span class="topbar__time-value">Day 1 08:00</span></div>
                 <div class="topbar__speed">
                     Speed <span class="topbar__speed-value">60</span>
-                    <input class="topbar__speed-input" type="range" min="0" max="3600" value="60" />
+                    <input class="topbar__speed-input" type="range" min="0" max="36000" value="60" />
                 </div>
             </div>
             <div class="topbar__group">
                 <button class="topbar__btn" data-action="highlights">Highlights</button>
+                <button class="topbar__btn" data-action="settings">Nav</button>
                 <div class="topbar__segmented" data-action="focus">
                     <button class="topbar__seg-btn" data-mode="jump">Jump</button>
                     <button class="topbar__seg-btn" data-mode="follow">Follow</button>
                     <button class="topbar__seg-btn" data-mode="both">Both</button>
+                </div>
+            </div>
+            <div class="topbar__panel">
+                <div class="topbar__panel-row">
+                    <span class="topbar__panel-label">Trespass (Res)</span>
+                    <input class="topbar__panel-input" data-trespass="resident" type="range" min="0" max="20" value="2" />
+                    <span class="topbar__panel-value" data-trespass-value="resident">2%</span>
+                </div>
+                <div class="topbar__panel-row">
+                    <span class="topbar__panel-label">Trespass (Tour)</span>
+                    <input class="topbar__panel-input" data-trespass="tourist" type="range" min="0" max="20" value="1" />
+                    <span class="topbar__panel-value" data-trespass-value="tourist">1%</span>
+                </div>
+                <div class="topbar__panel-row">
+                    <span class="topbar__panel-label">Trespass (Other)</span>
+                    <input class="topbar__panel-input" data-trespass="other" type="range" min="0" max="20" value="5" />
+                    <span class="topbar__panel-value" data-trespass-value="other">5%</span>
+                </div>
+                <div class="topbar__panel-row">
+                    <span class="topbar__panel-label">Sidewalk Offset</span>
+                    <input class="topbar__panel-input" data-sidewalk="offset" type="range" min="6" max="24" value="12" />
+                    <span class="topbar__panel-value" data-sidewalk-value="offset">12</span>
                 </div>
             </div>
         `;
@@ -79,6 +116,20 @@ export class Topbar {
         this.minimapToggle = this.container.querySelector('[data-action="minimap"]') as HTMLButtonElement;
         this.explorerToggle = this.container.querySelector('[data-action="explorer"]') as HTMLButtonElement;
         this.highlightToggle = this.container.querySelector('[data-action="highlights"]') as HTMLButtonElement;
+        this.settingsToggle = this.container.querySelector('[data-action="settings"]') as HTMLButtonElement;
+        this.settingsPanel = this.container.querySelector('.topbar__panel') as HTMLDivElement;
+        this.trespassInputs = {
+            resident: this.container.querySelector('[data-trespass="resident"]') as HTMLInputElement,
+            tourist: this.container.querySelector('[data-trespass="tourist"]') as HTMLInputElement,
+            other: this.container.querySelector('[data-trespass="other"]') as HTMLInputElement,
+        };
+        this.trespassValues = {
+            resident: this.container.querySelector('[data-trespass-value="resident"]') as HTMLSpanElement,
+            tourist: this.container.querySelector('[data-trespass-value="tourist"]') as HTMLSpanElement,
+            other: this.container.querySelector('[data-trespass-value="other"]') as HTMLSpanElement,
+        };
+        this.sidewalkInput = this.container.querySelector('[data-sidewalk="offset"]') as HTMLInputElement;
+        this.sidewalkValue = this.container.querySelector('[data-sidewalk-value="offset"]') as HTMLSpanElement;
 
         const focusButtons = Array.from(this.container.querySelectorAll('.topbar__seg-btn')) as HTMLButtonElement[];
         focusButtons.forEach(btn => {
@@ -91,10 +142,35 @@ export class Topbar {
         this.minimapToggle.addEventListener('click', () => this.setMinimapVisible(!this.state.minimapVisible, true));
         this.explorerToggle.addEventListener('click', () => this.setExplorerVisible(!this.state.explorerVisible, true));
         this.highlightToggle.addEventListener('click', () => this.setHighlightsEnabled(!this.state.highlightsEnabled, true));
+        this.settingsToggle.addEventListener('click', () => this.toggleSettingsPanel());
 
         this.speedInput.addEventListener('input', () => {
             const value = Number(this.speedInput.value);
             this.setSpeed(value, true);
+        });
+
+        Object.entries(this.trespassInputs).forEach(([key, input]) => {
+            input.addEventListener('input', () => {
+                const value = Number(input.value);
+                this.state.trespass[key as 'resident' | 'tourist' | 'other'] = value;
+                this.trespassValues[key as 'resident' | 'tourist' | 'other'].textContent = `${value}%`;
+                if (this.onTrespassChange) {
+                    this.onTrespassChange({
+                        resident: this.state.trespass.resident / 100,
+                        tourist: this.state.trespass.tourist / 100,
+                        other: this.state.trespass.other / 100,
+                    });
+                }
+            });
+        });
+
+        this.sidewalkInput.addEventListener('input', () => {
+            const value = Number(this.sidewalkInput.value);
+            this.state.sidewalkOffset = value;
+            this.sidewalkValue.textContent = String(value);
+            if (this.onSidewalkOffsetChange) {
+                this.onSidewalkOffsetChange(value);
+            }
         });
 
         this.syncButtons();
@@ -152,6 +228,15 @@ export class Topbar {
         this.setHighlightsEnabled(this.state.highlightsEnabled);
         this.setFocusMode(this.state.focusMode);
         this.setSpeed(this.state.speed);
+        this.trespassValues.resident.textContent = `${this.state.trespass.resident}%`;
+        this.trespassValues.tourist.textContent = `${this.state.trespass.tourist}%`;
+        this.trespassValues.other.textContent = `${this.state.trespass.other}%`;
+        this.sidewalkValue.textContent = String(this.state.sidewalkOffset);
+    }
+
+    private toggleSettingsPanel() {
+        const isOpen = this.settingsPanel.classList.toggle('open');
+        this.settingsToggle.classList.toggle('active', isOpen);
     }
 
     private applyStyles() {
@@ -167,6 +252,7 @@ export class Topbar {
                     display: flex;
                     align-items: center;
                     gap: 16px;
+                    flex-wrap: nowrap;
                     padding: 10px 16px;
                     border-radius: 14px;
                     background: rgba(18, 16, 13, 0.92);
@@ -176,6 +262,7 @@ export class Topbar {
                     font-size: 12px;
                     z-index: 120;
                     box-shadow: 0 12px 26px rgba(0, 0, 0, 0.4);
+                    max-width: calc(100% - 32px);
                 }
 
                 .topbar__group {
@@ -187,6 +274,7 @@ export class Topbar {
                 .topbar__group--center {
                     gap: 12px;
                     padding: 0 8px;
+                    white-space: nowrap;
                 }
 
                 .topbar__btn {
@@ -215,12 +303,14 @@ export class Topbar {
                     text-transform: uppercase;
                     letter-spacing: 0.4px;
                     color: rgba(242, 233, 218, 0.7);
+                    white-space: nowrap;
                 }
 
                 .topbar__time-value,
                 .topbar__speed-value {
                     color: #F7E6C4;
                     font-weight: 600;
+                    white-space: nowrap;
                 }
 
                 .topbar__speed-input {
@@ -249,6 +339,48 @@ export class Topbar {
                 .topbar__seg-btn.active {
                     background: rgba(70, 90, 120, 0.9);
                     color: #F2E9DA;
+                }
+
+                .topbar__panel {
+                    position: absolute;
+                    top: 54px;
+                    right: 16px;
+                    width: 260px;
+                    background: rgba(18, 16, 13, 0.95);
+                    border: 1px solid rgba(100, 85, 65, 0.8);
+                    border-radius: 12px;
+                    padding: 10px 12px;
+                    display: none;
+                    flex-direction: column;
+                    gap: 8px;
+                    z-index: 121;
+                    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.45);
+                }
+
+                .topbar__panel.open {
+                    display: flex;
+                }
+
+                .topbar__panel-row {
+                    display: grid;
+                    grid-template-columns: 110px 1fr 40px;
+                    gap: 8px;
+                    align-items: center;
+                    font-size: 10px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.4px;
+                    color: rgba(242, 233, 218, 0.7);
+                }
+
+                .topbar__panel-input {
+                    width: 100%;
+                    accent-color: #C7B089;
+                }
+
+                .topbar__panel-value {
+                    text-align: right;
+                    color: #F7E6C4;
+                    font-weight: 600;
                 }
             `;
             document.head.appendChild(style);

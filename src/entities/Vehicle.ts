@@ -145,13 +145,42 @@ export class Vehicle extends Agent {
     }
 
     update(delta: number) {
-        // Call parent update for movement logic
-        super.update(delta);
-        // Ensure carGroup is synced
-        this.updateMesh();
+        if (this.target) {
+            // Track history periodically
+            if (this.recentPath.length === 0 || this.position.distanceTo(this.recentPath[this.recentPath.length - 1]) > 5) {
+                this.recentPath.push(this.position.clone());
+                if (this.recentPath.length > 50) this.recentPath.shift();
+            }
+
+            const direction = new THREE.Vector3().subVectors(this.target, this.position);
+            direction.y = 0; // Keep movement horizontal
+            const dist = direction.length();
+
+            if (dist < 2) {
+                this.position.copy(this.target);
+                this.target = null;
+                this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 2 * delta);
+            } else {
+                // Calculate target rotation based on movement direction
+                this.targetRotation = Math.atan2(direction.x, direction.z);
+
+                // Accelerate toward target speed
+                this.currentSpeed = Math.min(this.speed, this.currentSpeed + this.speed * 2 * delta);
+
+                // Move forward
+                direction.normalize();
+                this.position.add(direction.multiplyScalar(this.currentSpeed * delta));
+            }
+        } else {
+            // No target - decelerate
+            this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 3 * delta);
+        }
+
+        // Always update mesh (including smooth rotation)
+        this.updateMesh(delta);
     }
 
-    updateMesh() {
+    updateMesh(delta?: number) {
         // Guard: carGroup may not exist when super() calls this during construction
         if (!this.carGroup) return;
 
@@ -162,8 +191,18 @@ export class Vehicle extends Agent {
             this.position.z
         );
 
-        // Set rotation from the agent's target rotation
-        this.carGroup.rotation.y = this.targetRotation;
+        // Smoothly interpolate rotation toward target (velocity direction)
+        if (delta !== undefined && delta > 0) {
+            let rotationDiff = this.targetRotation - this.carGroup.rotation.y;
+            // Normalize to -PI to PI
+            while (rotationDiff > Math.PI) rotationDiff -= Math.PI * 2;
+            while (rotationDiff < -Math.PI) rotationDiff += Math.PI * 2;
+
+            this.carGroup.rotation.y += rotationDiff * Math.min(1, this.rotationSpeed * delta);
+        } else {
+            // No delta provided (initial setup) - set rotation directly
+            this.carGroup.rotation.y = this.targetRotation;
+        }
 
         // Note: Don't modify this.mesh.position separately as it's a CHILD of carGroup
         // The mesh already has its local position set in the constructor (bodyHeight/2)

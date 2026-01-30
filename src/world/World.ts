@@ -18,8 +18,9 @@ export class World {
             let usage = LotUsage.RESIDENTIAL;
             let state = LotState.ABANDONED; // Start with many abandoned for Bombay Beach vibe
 
-            if (rand > 0.9) usage = LotUsage.COMMERCIAL;
-            else if (rand > 0.95) usage = LotUsage.PUBLIC;
+            if (rand > 0.96) usage = LotUsage.LODGING;
+            else if (rand > 0.9) usage = LotUsage.COMMERCIAL;
+            else if (rand > 0.85) usage = LotUsage.PUBLIC;
 
             // State distribution
             const stateRand = Math.random();

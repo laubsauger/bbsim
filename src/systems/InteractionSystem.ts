@@ -3,7 +3,7 @@ import { Lot, LotState, AgentType } from '../types';
 import { Inspector } from '../ui/Inspector';
 import { ExplorerEntityRef } from '../ui/EntityExplorer';
 
-export type FollowCallback = (target: THREE.Object3D | null) => void;
+export type FollowCallback = (target: THREE.Object3D | null, entity: ExplorerEntityRef | null) => void;
 export type SelectCallback = (entity: ExplorerEntityRef | null) => void;
 
 // Consistent colors matching WorldRenderer
@@ -34,6 +34,7 @@ export class InteractionSystem {
 
     private onFollowCallbacks: FollowCallback[] = [];
     private onSelectCallbacks: SelectCallback[] = [];
+    private isOverUI: boolean = false;
 
     constructor(camera: THREE.Camera, scene: THREE.Scene) {
         this.camera = camera;
@@ -63,6 +64,11 @@ export class InteractionSystem {
 
     initEvents() {
         window.addEventListener('mousemove', (event) => {
+            // Check if mouse is over a UI element (not the canvas or body)
+            const target = event.target as HTMLElement;
+            const canvas = document.querySelector('canvas');
+            this.isOverUI = target !== canvas && target !== document.body;
+
             // Update pointer
             this.pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
             this.pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -107,6 +113,13 @@ export class InteractionSystem {
 
     update(objects: THREE.Object3D[]) {
         this.lastObjects = objects;
+
+        // Hide tooltip if mouse is over UI panels
+        if (this.isOverUI) {
+            this.tooltip.style.display = 'none';
+            return;
+        }
+
         this.raycaster.setFromCamera(this.pointer, this.camera);
 
         const intersects = this.raycaster.intersectObjects(objects, true); // Recursive
@@ -175,6 +188,15 @@ export class InteractionSystem {
                                 Age: ${resident.data.age} | ${resident.data.occupation}<br>
                                 <span style="color: #aaa">📍 ${resident.address}</span><br>
                                 ${resident.data.hasCar ? '🚗 Has car' : '🚶 No car'} | ${resident.isHome ? 'At home' : 'Out'}
+                            </div>
+                        `);
+                    } else if (data.type === 'tourist') {
+                        const tourist = data.data;
+                        hits.push(`
+                            <div style="margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px;">
+                                <strong style="color: #FFB347">📷 TOURIST</strong><br>
+                                ID: ${tourist.id}<br>
+                                ${tourist.data?.lodgingLot ? '🏨 Lodging guest' : '🚶 Day visitor'}
                             </div>
                         `);
                     } else if (data.type === 'agent') {
@@ -259,8 +281,8 @@ export class InteractionSystem {
         this.onFollowCallbacks.push(callback);
     }
 
-    private emitFollow(target: THREE.Object3D | null) {
-        this.onFollowCallbacks.forEach(cb => cb(target));
+    private emitFollow(target: THREE.Object3D | null, entity: ExplorerEntityRef | null) {
+        this.onFollowCallbacks.forEach(cb => cb(target, entity));
     }
 
     onSelect(callback: SelectCallback) {
@@ -277,22 +299,22 @@ export class InteractionSystem {
 
         if (entity) {
             this.inspector.show(entity);
-            if (entity.type === 'agent' || entity.type === 'vehicle' || entity.type === 'resident') {
+            if (entity.type === 'agent' || entity.type === 'vehicle' || entity.type === 'resident' || entity.type === 'tourist') {
                 this.showAgentPath(entity.data);
                 const targetMesh = entity.type === 'vehicle' ? entity.data.carGroup : entity.data.mesh;
                 if (emitFollow) {
-                    this.emitFollow(targetMesh);
+                    this.emitFollow(targetMesh, entity);
                 } else {
-                    this.emitFollow(null);
+                    this.emitFollow(null, null);
                 }
             } else {
                 this.clearPath();
-                this.emitFollow(null);
+                this.emitFollow(null, null);
             }
         } else {
             this.inspector.hide();
             this.clearPath();
-            this.emitFollow(null);
+            this.emitFollow(null, null);
         }
 
         if (emitSelect) {

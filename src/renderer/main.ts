@@ -21,6 +21,8 @@ import { OverlayMenu, OverlayType } from '../ui/OverlayMenu';
 import { EntityExplorer } from '../ui/EntityExplorer';
 import { SelectionHighlighter } from '../ui/SelectionHighlighter';
 import { Topbar, FocusMode } from '../ui/Topbar';
+import { TouristSystem } from '../systems/TouristSystem';
+import { ResidentScheduleSystem } from '../systems/ResidentScheduleSystem';
 
 async function init() {
     // --- 1. Systems Setup ---
@@ -28,6 +30,8 @@ async function init() {
     const world = new World();
     const agents: Agent[] = []; // Unified list
     let pathSystem: PathfindingSystem;
+    let touristSystem: TouristSystem | null = null;
+    let residentScheduleSystem: ResidentScheduleSystem | null = null;
     let addressSystem: AddressSystem;
 
     // --- 2. Graphics Setup ---
@@ -59,8 +63,10 @@ async function init() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.maxDistance = 10000;
-    controls.minDistance = 50; // Allow closer zoom
+    controls.screenSpacePanning = false; // Pan in XZ plane (better for maps)
+    controls.maxDistance = 6000;
+    controls.minDistance = 15; // Allow very close zoom
+    controls.maxPolarAngle = Math.PI / 2 - 0.05; // Don't go below ground
     controls.target.set(1000, 0, 1000);  // Match the camera lookAt target
 
     // Camera follow system
@@ -69,10 +75,10 @@ async function init() {
     let followActive = false;
     let pendingFollowTarget: THREE.Object3D | null = null;
     let worldBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
-    const shoulderOffset = {
-        distance: 110,
-        height: 45,
-        side: 16,
+    const followOffsets = {
+        resident: { distance: 90, height: 38, side: 14 },
+        vehicle: { distance: 120, height: 50, side: 20 },
+        agent: { distance: 95, height: 40, side: 14 },
     };
 
     const cameraJump = {
@@ -85,6 +91,16 @@ async function init() {
         duration: 0.45,
         onComplete: null as null | (() => void),
         controlsWasEnabled: true,
+    };
+
+    const followTransition = {
+        active: false,
+        startPos: new THREE.Vector3(),
+        endPos: new THREE.Vector3(),
+        startTarget: new THREE.Vector3(),
+        endTarget: new THREE.Vector3(),
+        elapsed: 0,
+        duration: 0.35,
     };
 
     // Lights - warm desert sun with proper shadows
@@ -106,8 +122,8 @@ async function init() {
     sunLight.castShadow = true;
 
     // Shadow configuration for quality
-    sunLight.shadow.mapSize.width = 4096;
-    sunLight.shadow.mapSize.height = 4096;
+    sunLight.shadow.mapSize.width = 8192;
+    sunLight.shadow.mapSize.height = 8192;
     sunLight.shadow.camera.near = 100;
     sunLight.shadow.camera.far = 8000;
     sunLight.shadow.camera.left = -3000;
@@ -133,18 +149,18 @@ async function init() {
     // Minimap
     const minimap = new Minimap(controls, camera);
 
-    // Legend - positioned above minimap
+    // Legend - positioned above minimap (minimap is 300px + 12px from bottom)
     const legend = document.createElement('div');
     legend.style.cssText = `
         position: absolute;
-        bottom: 252px;
-        left: 20px;
+        bottom: 320px;
+        left: 12px;
         background: rgba(30, 25, 20, 0.9);
         color: #CCC;
-        padding: 10px 14px;
-        border-radius: 8px;
+        padding: 8px 12px;
+        border-radius: 6px;
         font-family: system-ui, sans-serif;
-        font-size: 11px;
+        font-size: 10px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     `;
     legend.innerHTML = `
@@ -186,12 +202,14 @@ async function init() {
     });
 
     // Subscribe to follow events
-    interactionSystem.onFollow((target) => {
+    let followEntityType: 'resident' | 'vehicle' | 'agent' | null = null;
+    interactionSystem.onFollow((target, entity) => {
         if (!target) {
             followTarget = null;
             followLastPos = null;
             followActive = false;
             pendingFollowTarget = null;
+            followEntityType = null;
             return;
         }
 
@@ -199,10 +217,11 @@ async function init() {
             followTarget = target;
             followLastPos = null;
             followActive = true;
+            followEntityType = (entity?.type as 'resident' | 'vehicle' | 'agent') || 'agent';
             if (cameraJump.active) {
                 pendingFollowTarget = target;
             } else {
-                setShoulderCamera(target);
+                startFollowTransition(target);
             }
         }
     });
@@ -279,7 +298,8 @@ async function init() {
             if (overlay === 'addresses') {
                 if (enabled && addressSystem) {
                     const labels = addressSystem.createStreetLabels();
-                    scene.add(labels);
+                    // Add to worldRenderer.group so labels align with the centered world
+                    worldRenderer.group.add(labels);
                 } else if (addressSystem) {
                     addressSystem.removeStreetLabels();
                 }
@@ -307,14 +327,24 @@ async function init() {
         },
         onFocusModeChange: (mode) => {
             focusMode = mode;
-        }
+        },
+        onTrespassChange: (chances) => {
+            if (pathSystem) {
+                pathSystem.setTrespassChances(chances);
+            }
+        },
+        onSidewalkOffsetChange: (offset) => {
+            if (pathSystem) {
+                pathSystem.setSidewalkOffset(offset);
+            }
+        },
     });
 
     // --- 3. UI Setup ---
     const gui = new GUI();
 
     const timeFolder = gui.addFolder('Time');
-    timeFolder.add(state, 'timeSpeed', 0, 3600).name('Time Speed').onChange((v: number) => {
+    timeFolder.add(state, 'timeSpeed', 0, 36000).name('Time Speed').onChange((v: number) => {
         timeSystem.time.speed = v;
         topbar.setSpeed(v);
     });
@@ -370,18 +400,13 @@ async function init() {
             worldRenderer.group.add(r.mesh);
         });
 
-        // Add tourists to scene (position them on roads)
-        pop.tourists.forEach(t => {
-            t.position.copy(pathSystem.getRandomPointOnRoad());
-            t.updateMesh();
-            agents.push(t);
-            worldRenderer.group.add(t.mesh);
-        });
-
         // Add vehicles to scene
         pop.vehicles.forEach(v => {
-            v.position.copy(pathSystem.getRandomPointOnRoad());
-            v.updateMesh();
+            // Only reposition tourist cars to roads - resident cars stay at their lot parking spots
+            if (v.isTouristCar) {
+                v.position.copy(pathSystem.getRandomPointOnRoad());
+                v.updateMesh();
+            }
             agents.push(v);
             worldRenderer.group.add(v.carGroup);
         });
@@ -394,6 +419,11 @@ async function init() {
         });
 
         selectionHighlighter.setData(pop.residents, pop.vehicles, world.lots);
+
+        if (touristSystem) {
+            touristSystem.clear();
+            touristSystem.setTargetCount(simConfig.touristCount);
+        }
     }
 
     try {
@@ -430,6 +460,39 @@ async function init() {
         populationSystem = new PopulationSystem(world.lots);
         spawnPopulation();
 
+        touristSystem = new TouristSystem({
+            lots: world.lots,
+            pathSystem,
+            worldBounds: world.bounds,
+            onAddAgent: (agent) => {
+                agents.push(agent as any);
+                if (agent instanceof Vehicle) {
+                    worldRenderer.group.add(agent.carGroup);
+                } else {
+                    worldRenderer.group.add((agent as any).mesh);
+                }
+            },
+            onRemoveAgent: (agent) => {
+                const idx = agents.indexOf(agent as any);
+                if (idx >= 0) agents.splice(idx, 1);
+                if (agent instanceof Vehicle) {
+                    worldRenderer.group.remove(agent.carGroup);
+                } else {
+                    worldRenderer.group.remove((agent as any).mesh);
+                }
+            }
+        });
+
+        residentScheduleSystem = new ResidentScheduleSystem({
+            lots: world.lots,
+            pathSystem,
+            worldBounds: world.bounds,
+        });
+
+        if (touristSystem) {
+            touristSystem.setTargetCount(simConfig.touristCount);
+        }
+
     } catch (error) {
         console.error('Error loading map:', error);
     }
@@ -459,6 +522,13 @@ async function init() {
 
                 pathSystem.updateTraffic(agents, delta * timeScale);
                 agents.forEach(a => a.update(delta * timeScale));
+
+                if (touristSystem) {
+                    touristSystem.update(timeSystem.time.totalSeconds, delta * timeScale);
+                }
+                if (residentScheduleSystem) {
+                    residentScheduleSystem.update(timeSystem.time.totalSeconds, timeSystem.time.hour, populationSystem.residents);
+                }
             }
         }
 
@@ -473,14 +543,25 @@ async function init() {
                 cameraJump.active = false;
                 controls.enabled = cameraJump.controlsWasEnabled;
                 if (pendingFollowTarget) {
-                    setShoulderCamera(pendingFollowTarget);
+                    startFollowTransition(pendingFollowTarget);
                     pendingFollowTarget = null;
                 }
                 if (cameraJump.onComplete) cameraJump.onComplete();
             }
         }
 
-        if (followTarget && followActive && !cameraJump.active) {
+        if (followTransition.active) {
+            followTransition.elapsed += delta;
+            const t = Math.min(1, followTransition.elapsed / followTransition.duration);
+            const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+            camera.position.lerpVectors(followTransition.startPos, followTransition.endPos, eased);
+            controls.target.lerpVectors(followTransition.startTarget, followTransition.endTarget, eased);
+            if (t >= 1) {
+                followTransition.active = false;
+            }
+        }
+
+        if (followTarget && followActive && !cameraJump.active && !followTransition.active) {
             followIndicator.style.display = 'block';
             const targetPos = new THREE.Vector3();
             followTarget.getWorldPosition(targetPos);
@@ -515,7 +596,7 @@ async function init() {
     // Use setAnimationLoop for WebGPU/XR
     renderer.setAnimationLoop(animate);
 
-    function setShoulderCamera(target: THREE.Object3D) {
+    function getShoulderPose(target: THREE.Object3D): { pos: THREE.Vector3; target: THREE.Vector3 } {
         const targetPos = new THREE.Vector3();
         target.getWorldPosition(targetPos);
         const targetQuat = new THREE.Quaternion();
@@ -527,12 +608,32 @@ async function init() {
         }
         forward.normalize();
         const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
-        const offset = forward.clone().multiplyScalar(-shoulderOffset.distance)
-            .add(new THREE.Vector3(0, shoulderOffset.height, 0))
-            .add(right.multiplyScalar(shoulderOffset.side));
-        camera.position.copy(clampCameraPosition(targetPos.clone().add(offset)));
-        controls.target.copy(targetPos);
-        followLastPos = targetPos.clone();
+        const offsets = followEntityType ? followOffsets[followEntityType] : followOffsets.agent;
+        const offset = forward.clone().multiplyScalar(-offsets.distance)
+            .add(new THREE.Vector3(0, offsets.height, 0))
+            .add(right.multiplyScalar(offsets.side));
+        return {
+            pos: clampCameraPosition(targetPos.clone().add(offset)),
+            target: targetPos.clone()
+        };
+    }
+
+    function setShoulderCamera(target: THREE.Object3D) {
+        const pose = getShoulderPose(target);
+        camera.position.copy(pose.pos);
+        controls.target.copy(pose.target);
+        followLastPos = pose.target.clone();
+    }
+
+    function startFollowTransition(target: THREE.Object3D) {
+        const pose = getShoulderPose(target);
+        followTransition.active = true;
+        followTransition.elapsed = 0;
+        followTransition.startPos.copy(camera.position);
+        followTransition.endPos.copy(pose.pos);
+        followTransition.startTarget.copy(controls.target);
+        followTransition.endTarget.copy(pose.target);
+        followLastPos = pose.target.clone();
     }
 
     function jumpToEntity(entity: { type: string; data: any }) {
@@ -557,7 +658,7 @@ async function init() {
             const lot = entity.data;
             const centerX = lot.points.reduce((s: number, p: any) => s + p.x, 0) / lot.points.length;
             const centerY = lot.points.reduce((s: number, p: any) => s + p.y, 0) / lot.points.length;
-            return new THREE.Vector3(centerX, 2, centerY).add(worldRenderer.group.position);
+            return new THREE.Vector3(centerX, 2, -centerY).add(worldRenderer.group.position);
         }
         if (entity.type === 'vehicle') {
             const pos = new THREE.Vector3();
@@ -596,9 +697,10 @@ async function init() {
             forward.set(0, 0, 1);
         }
         forward.normalize();
+        const offsets = followEntityType ? followOffsets[followEntityType] : followOffsets.agent;
         return targetPos.clone()
-            .add(forward.clone().multiplyScalar(-shoulderOffset.distance))
-            .add(new THREE.Vector3(0, shoulderOffset.height, 0));
+            .add(forward.clone().multiplyScalar(-offsets.distance))
+            .add(new THREE.Vector3(0, offsets.height, 0));
     }
 
     function clampCameraPosition(position: THREE.Vector3): THREE.Vector3 {

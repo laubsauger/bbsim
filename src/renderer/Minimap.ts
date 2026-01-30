@@ -14,8 +14,8 @@ const MINIMAP_COLORS = {
     forSale: '#2D353D',      // Dark blue
     empty: '#3A3A3A',        // Dark gray
     // Border/presence
-    borderPresent: '#44FF88',
-    borderAway: '#666666',
+    borderPresent: '#3A9A6A',
+    borderAway: '#555555',
     // UI
     viewportStroke: '#FFE4B5',
     northArrow: '#CC3333',
@@ -31,8 +31,8 @@ export class Minimap {
     ctx: CanvasRenderingContext2D;
 
     world: World | null = null;
-    width: number = 220;
-    height: number = 220;
+    width: number = 300;
+    height: number = 300;
 
     scale: number = 0.1;
     offsetX: number = 0;
@@ -54,17 +54,17 @@ export class Minimap {
         this.canvas.width = this.width;
         this.canvas.height = this.height;
         this.canvas.style.position = 'absolute';
-        this.canvas.style.bottom = '20px';
-        this.canvas.style.left = '20px';
-        this.canvas.style.border = '2px solid #3D3530';
+        this.canvas.style.bottom = '12px';
+        this.canvas.style.left = '12px';
+        this.canvas.style.border = '1px solid #3D3530';
         this.canvas.style.backgroundColor = MINIMAP_COLORS.background;
-        this.canvas.style.borderRadius = '8px';
+        this.canvas.style.borderRadius = '6px';
         this.canvas.style.cursor = 'crosshair';
-        this.canvas.style.boxShadow = '0 2px 10px rgba(0,0,0,0.5)';
+        this.canvas.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
 
         document.body.appendChild(this.canvas);
 
-        const context = this.canvas.getContext('2d');
+        const context = this.canvas.getContext('2d', { willReadFrequently: true });
         if (!context) throw new Error("Could not get 2D context");
         this.ctx = context;
 
@@ -78,15 +78,15 @@ export class Minimap {
         this.modeToggle.title = 'Toggle minimap mode (overlay/grid)';
         this.modeToggle.style.cssText = `
             position: absolute;
-            bottom: ${20 + this.height - 28}px;
-            left: ${20 + this.width - 28}px;
-            width: 24px;
-            height: 24px;
+            bottom: ${12 + this.height - 26}px;
+            left: ${12 + this.width - 26}px;
+            width: 22px;
+            height: 22px;
             border: 1px solid #3D3530;
             border-radius: 4px;
             background: rgba(30, 25, 20, 0.9);
             color: #AAA;
-            font-size: 14px;
+            font-size: 12px;
             cursor: pointer;
             z-index: 101;
             display: flex;
@@ -112,11 +112,11 @@ export class Minimap {
 
         const scaleX = this.width / w;
         const scaleY = this.height / h;
-        this.scale = Math.min(scaleX, scaleY) * 0.85; // Leave room for north indicator
+        this.scale = Math.min(scaleX, scaleY) * 0.94; // Maximize map area
 
-        // Center offset (with padding for north arrow)
+        // Center offset (minimal padding for north arrow)
         this.offsetX = (this.width - w * this.scale) / 2;
-        this.offsetY = (this.height - h * this.scale) / 2 + 10; // Shift down for north arrow
+        this.offsetY = (this.height - h * this.scale) / 2 + 4; // Small shift for north arrow
 
         this.renderStaticBackground();
     }
@@ -241,23 +241,23 @@ export class Minimap {
 
     private drawNorthIndicator() {
         const cx = this.width / 2;
-        const cy = 12;
+        const cy = 8;
 
-        // Arrow pointing up
+        // Arrow pointing up (compact)
         this.ctx.fillStyle = MINIMAP_COLORS.northArrow;
         this.ctx.beginPath();
-        this.ctx.moveTo(cx, cy - 8);
-        this.ctx.lineTo(cx - 5, cy + 4);
+        this.ctx.moveTo(cx, cy - 5);
+        this.ctx.lineTo(cx - 4, cy + 3);
         this.ctx.lineTo(cx, cy);
-        this.ctx.lineTo(cx + 5, cy + 4);
+        this.ctx.lineTo(cx + 4, cy + 3);
         this.ctx.closePath();
         this.ctx.fill();
 
-        // "N" label
+        // "N" label (smaller, closer)
         this.ctx.fillStyle = '#FFFFFF';
-        this.ctx.font = 'bold 8px sans-serif';
+        this.ctx.font = 'bold 7px sans-serif';
         this.ctx.textAlign = 'center';
-        this.ctx.fillText('N', cx, cy + 14);
+        this.ctx.fillText('N', cx, cy + 10);
     }
 
     initEvents() {
@@ -289,11 +289,11 @@ export class Minimap {
         const svgY = this.world.bounds.minY + (y - this.offsetY) / this.scale;
 
         // Convert SVG to 3D world coordinates (centered)
-        // 3D transform: x = svgX - centerX, z = -(svgY - centerY)
+        // SVG (x, y) → 3D (x, height, y), then centered: worldX = svgX - centerX, worldZ = svgY - centerY
         const centerX = (this.world.bounds.minX + this.world.bounds.maxX) / 2;
         const centerY = (this.world.bounds.minY + this.world.bounds.maxY) / 2;
         const worldX = svgX - centerX;
-        const worldZ = -(svgY - centerY);  // Negate for 3D Z
+        const worldZ = svgY - centerY;
 
         // Move camera and target
         const currentTarget = this.controls.target;
@@ -315,11 +315,11 @@ export class Minimap {
 
         // Draw agents
         agents.forEach(agent => {
-            // Convert from 3D world to minimap
-            // 3D transform: SVG (x, y) → 3D (x, height, -y)
-            // So: SVG.x = 3D.x, SVG.y = -3D.z
+            // Convert from 3D local coords to minimap
+            // Agent position is in local coords (SVG space): SVG (x, y) → 3D (x, height, y)
+            // So: SVG.x = position.x, SVG.y = position.z
             const svgX = agent.position.x;
-            const svgY = -agent.position.z;  // Negate Z to get SVG Y
+            const svgY = agent.position.z;
 
             const sx = this.worldToScreenX(svgX);
             const sy = this.worldToScreenY(svgY);
@@ -328,27 +328,22 @@ export class Minimap {
             const mat = agent.mesh.material as THREE.MeshStandardMaterial;
             const hex = '#' + mat.color.getHexString();
 
-            // Draw dot
+            // Draw dot (smaller for less crowding)
             this.ctx.beginPath();
-            this.ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+            this.ctx.arc(sx, sy, 2, 0, Math.PI * 2);
             this.ctx.fillStyle = hex;
             this.ctx.fill();
-
-            // White outline for visibility
-            this.ctx.strokeStyle = '#FFFFFF';
-            this.ctx.lineWidth = 0.5;
-            this.ctx.stroke();
         });
 
         // Draw camera viewport
-        // Camera target is in centered 3D space
-        // 3D transform: x = svgX - centerX, z = -(svgY - centerY)
-        // So: svgX = centerX + x, svgY = centerY - z
+        // Camera target is in centered 3D space (world is centered around 0,0,0)
+        // SVG (x, y) → 3D (x, height, y), then centered: worldX = svgX - centerX, worldZ = svgY - centerY
+        // So: svgX = centerX + worldX, svgY = centerY + worldZ
         const centerX = (this.world.bounds.minX + this.world.bounds.maxX) / 2;
         const centerY = (this.world.bounds.minY + this.world.bounds.maxY) / 2;
 
         const camSvgX = centerX + this.controls.target.x;
-        const camSvgY = centerY - this.controls.target.z;  // Negate Z
+        const camSvgY = centerY + this.controls.target.z;
 
         const tx = this.worldToScreenX(camSvgX);
         const ty = this.worldToScreenY(camSvgY);
@@ -357,7 +352,7 @@ export class Minimap {
         this.ctx.lineWidth = 1.5;
 
         // Crosshair
-        const size = 8;
+        const size = 10;
         this.ctx.beginPath();
         this.ctx.moveTo(tx - size, ty);
         this.ctx.lineTo(tx + size, ty);
@@ -365,10 +360,10 @@ export class Minimap {
         this.ctx.lineTo(tx, ty + size);
         this.ctx.stroke();
 
-        // Viewport box
+        // Viewport box (larger for the bigger minimap)
         this.ctx.strokeStyle = 'rgba(255, 228, 181, 0.5)';
         this.ctx.lineWidth = 1;
-        this.ctx.strokeRect(tx - 20, ty - 20, 40, 40);
+        this.ctx.strokeRect(tx - 30, ty - 30, 60, 60);
     }
 
     worldToScreenX(svgX: number): number {

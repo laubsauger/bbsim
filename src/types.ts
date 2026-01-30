@@ -7,6 +7,7 @@ export enum LotUsage {
     VACANT = 'vacant',
     RESIDENTIAL = 'residential',
     COMMERCIAL = 'commercial',
+    LODGING = 'lodging',
     PUBLIC = 'public'
 }
 
@@ -45,6 +46,8 @@ export interface Lot {
     entryPoint?: Point; // Point just inside the lot boundary
     roadAccessPoint?: Point; // Point on the road graph nearest to entry
     gatePositions?: Point[]; // Fence gate positions on short road-facing sides
+    parkingSpot?: Point; // Designated parking spot on the lot
+    parkingRotation?: number; // Rotation in radians for parked cars (facing road)
 
     // Address
     address?: Address;

@@ -1,4 +1,5 @@
 import { LotState, AgentType } from '../types';
+import { ResidentState } from '../entities/Resident';
 
 // Consistent colors matching InteractionSystem tooltip
 const LOT_STATE_COLORS = {
@@ -73,6 +74,8 @@ export class Inspector {
             `;
         } else if (data.type === 'resident') {
             const resident = data.data;
+            const behaviorState = resident.behaviorState || 'unknown';
+            const behaviorDisplay = this.getBehaviorDisplay(behaviorState);
             html += `
                 <div style="margin-bottom: 8px;">
                     <strong style="color: #50C878; font-size: 14px;">🏠 ${resident.fullName}</strong>
@@ -89,7 +92,8 @@ export class Inspector {
                     ${resident.isHome ? '<span style="color: #50C878;">At home</span>' : '<span style="color: #FFB347;">Out</span>'}
                 </div>
                 <div style="margin-bottom: 4px;">
-                    <span style="color: #888;">Speed:</span> ${resident.speed.toFixed(1)}
+                    <span style="color: #888;">Activity:</span>
+                    <span style="color: ${behaviorDisplay.color};">${behaviorDisplay.label}</span>
                 </div>
             `;
         } else if (data.type === 'agent') {
@@ -114,6 +118,28 @@ export class Inspector {
             }
             if (agent.path && agent.path.length > 0) {
                 html += `<div style="margin-bottom: 4px;"><span style="color: #888;">Path:</span> ${agent.path.length} waypoints</div>`;
+            }
+        } else if (data.type === 'tourist') {
+            const tourist = data.data;
+            html += `
+                <div style="margin-bottom: 8px;">
+                    <strong style="color: #FFB347; font-size: 14px;">📷 TOURIST</strong>
+                </div>
+                <div style="margin-bottom: 4px;">
+                    <span style="color: #888;">ID:</span> ${tourist.id}
+                </div>
+                <div style="margin-bottom: 4px;">
+                    <span style="color: #888;">State:</span> ${tourist.state}
+                </div>
+                <div style="margin-bottom: 4px;">
+                    <span style="color: #888;">Position:</span> ${tourist.mesh.position.x.toFixed(0)}, ${tourist.mesh.position.z.toFixed(0)}
+                </div>
+                <div style="margin-bottom: 4px;">
+                    <span style="color: #888;">Lodging:</span> ${tourist.data?.lodgingLot ? `Lot #${tourist.data.lodgingLot.id}` : 'None'}
+                </div>
+            `;
+            if (tourist.target) {
+                html += `<div style="margin-bottom: 4px;"><span style="color: #888;">Target:</span> ${tourist.target.x.toFixed(0)}, ${tourist.target.z.toFixed(0)}</div>`;
             }
         } else if (data.type === 'vehicle') {
             const vehicle = data.data;
@@ -197,6 +223,23 @@ export class Inspector {
                 return { label: '🐈 CAT', color: '#E8E8E8' };
             default:
                 return { label: 'UNKNOWN', color: '#888888' };
+        }
+    }
+
+    private getBehaviorDisplay(state: ResidentState): { label: string; color: string } {
+        switch (state) {
+            case ResidentState.IDLE_HOME:
+                return { label: '🏠 Relaxing at home', color: '#50C878' };
+            case ResidentState.WALKING_TO_CAR:
+                return { label: '🚶 Walking to car', color: '#FFB347' };
+            case ResidentState.DRIVING:
+                return { label: '🚗 Driving', color: '#4ECDC4' };
+            case ResidentState.WALKING_HOME:
+                return { label: '🏠 Heading home', color: '#88AAFF' };
+            case ResidentState.WALKING_AROUND:
+                return { label: '🚶 Walking around', color: '#FFB347' };
+            default:
+                return { label: 'Unknown', color: '#888888' };
         }
     }
 }

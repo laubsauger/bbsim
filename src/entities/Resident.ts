@@ -63,6 +63,8 @@ export class Resident extends Agent {
     data: ResidentData;
     isHome: boolean = true;
     isInCar: boolean = false;
+    scheduleOverride: boolean = false;
+    allowedLots: number[] = [];
 
     // Behavior state machine
     behaviorState: ResidentState = ResidentState.IDLE_HOME;
@@ -91,9 +93,9 @@ export class Resident extends Agent {
         }
 
         // Convert 3D position to SVG coordinates
-        // 3D (x, y, z) → SVG (x, y): svgX = position.x, svgY = -position.z
+        // 3D (x, y, z) → SVG (x, y): svgX = position.x, svgY = position.z
         const svgX = this.position.x;
-        const svgY = -this.position.z;
+        const svgY = this.position.z;
 
         // Check if point is inside the lot polygon using ray casting
         this.isHome = this.isPointInLot(svgX, svgY, lot.points);
@@ -114,8 +116,10 @@ export class Resident extends Agent {
     }
 
     update(delta: number) {
-        // If in car, don't update resident movement (car handles it)
-        if (!this.isInCar) {
+        // If in car, sync position with car
+        if (this.isInCar && this.data.car) {
+            this.position.copy(this.data.car.position);
+        } else {
             super.update(delta);
         }
 
@@ -127,6 +131,9 @@ export class Resident extends Agent {
     }
 
     private updateBehavior(delta: number) {
+        if (this.scheduleOverride) {
+            return;
+        }
         switch (this.behaviorState) {
             case ResidentState.IDLE_HOME:
                 this.idleTimer -= delta;
@@ -205,8 +212,8 @@ export class Resident extends Agent {
         if (lot && lot.points.length > 0) {
             const centerX = lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length;
             const centerY = lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length;
-            // SVG → 3D: (x, height, -y)
-            this.setTargetPosition(new THREE.Vector3(centerX, 2, -centerY));
+            // SVG → 3D: (x, height, y)
+            this.setTargetPosition(new THREE.Vector3(centerX, 2, centerY));
         }
     }
 

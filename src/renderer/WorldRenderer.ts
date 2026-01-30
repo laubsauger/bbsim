@@ -19,9 +19,9 @@ const LOT_BASE_COLORS = {
 
 // Border colors indicate PRESENCE STATUS (home vs away)
 const LOT_BORDER_COLORS = {
-    present: 0x44FF88,     // Bright neon green - owner is home
-    away: 0x888888,        // Medium gray - owner is away
-    vacant: 0x555555,      // Dim gray - no owner
+    present: 0x3A9A6A,     // Muted green - owner is home
+    away: 0x666666,        // Medium gray - owner is away
+    vacant: 0x444444,      // Dim gray - no owner
 };
 
 export class WorldRenderer {
@@ -258,6 +258,26 @@ export class WorldRenderer {
             mesh.castShadow = true;
 
             this.group.add(mesh);
+
+            // Render Gates
+            if (lot.gatePositions) {
+                const gateGeo = new THREE.BoxGeometry(1.5, 6, 1.5); // Thin pillars
+                const gateMat = new THREE.MeshStandardMaterial({ color: 0x5D4037 }); // Dark brown
+
+                lot.gatePositions.forEach(gate => {
+                    // Render a simple arch or two pillars
+                    // Since we don't know orientation easily without edge data, just place markers
+                    const p1 = new THREE.Mesh(gateGeo, gateMat);
+                    p1.position.set(gate.x - 2, 3, gate.y);
+                    p1.castShadow = true;
+                    this.group.add(p1);
+
+                    const p2 = new THREE.Mesh(gateGeo, gateMat);
+                    p2.position.set(gate.x + 2, 3, gate.y);
+                    p2.castShadow = true;
+                    this.group.add(p2);
+                });
+            }
         });
 
         // Second pass: render unique lot borders (collapsed/deduplicated)
@@ -308,7 +328,7 @@ export class WorldRenderer {
         // Use LineSegments for efficient rendering of disconnected lines
         const geometry = new THREE.BufferGeometry().setFromPoints(linePoints);
         const material = new THREE.LineBasicMaterial({
-            color: 0x888888,
+            color: 0x555555,
             linewidth: 1,
         });
         const borderLines = new THREE.LineSegments(geometry, material);

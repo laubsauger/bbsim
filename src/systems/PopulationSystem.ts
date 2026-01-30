@@ -21,7 +21,6 @@ export class PopulationSystem {
 
     populate(config: PopulationConfig): { residents: Resident[], tourists: Agent[], vehicles: Vehicle[] } {
         this.residents = [];
-        this.tourists = [];
         this.vehicles = [];
 
         // Get lots that can have residents (not empty/for_sale)
@@ -37,16 +36,53 @@ export class PopulationSystem {
         }
 
         // Distribute residents among lots
-        // Some lots get more residents (households of 1-4)
+        // Weighted household size: mostly singles/couples, rare larger households
         let residentId = 0;
         let residentsToPlace = config.residentCount;
+        const lotOccupancy = new Map<number, number>();
+        const maxOccupantsPerLot = 3; // Lower max for smaller households
 
-        while (residentsToPlace > 0 && habitableLots.length > 0) {
-            // Pick a random lot
-            const lot = habitableLots[Math.floor(Math.random() * habitableLots.length)];
+        // Weighted household size - heavily favor singles and couples
+        const pickHouseholdSize = (remaining: number) => {
+            const roll = Math.random();
+            let size = 1;
+            if (roll < 0.55) size = 1;       // 55% singles
+            else if (roll < 0.88) size = 2;  // 33% couples
+            else if (roll < 0.97) size = 3;  // 9% small families
+            else size = 4;                    // 3% larger families
+            return Math.min(remaining, size);
+        };
 
-            // Random household size (1-4)
-            const householdSize = Math.min(residentsToPlace, 1 + Math.floor(Math.random() * 4));
+        // Track available lots (not yet at capacity)
+        const availableLots = [...habitableLots];
+        let failedAttempts = 0;
+        const maxFailedAttempts = 50;
+
+        while (residentsToPlace > 0 && availableLots.length > 0 && failedAttempts < maxFailedAttempts) {
+            // Pick a truly random lot each time
+            const randomIndex = Math.floor(Math.random() * availableLots.length);
+            const lot = availableLots[randomIndex];
+            const current = lotOccupancy.get(lot.id) || 0;
+
+            if (current >= maxOccupantsPerLot) {
+                // Remove full lot from available list
+                availableLots.splice(randomIndex, 1);
+                failedAttempts++;
+                continue;
+            }
+
+            // Abandoned lots have 90% chance to be skipped (rare squatters only)
+            if (lot.state === LotState.ABANDONED && Math.random() < 0.9) {
+                failedAttempts++;
+                continue;
+            }
+
+            failedAttempts = 0; // Reset on successful placement
+
+            const householdSize = Math.min(
+                pickHouseholdSize(residentsToPlace),
+                maxOccupantsPerLot - current
+            );
 
             // Get lot center for positioning
             const lotCenter = this.getLotCenter(lot);
@@ -62,54 +98,47 @@ export class PopulationSystem {
                 const resident = Resident.generateRandom(`res_${residentId}`, lot, pos);
                 this.residents.push(resident);
 
-                // Create car if resident has one
+                // Create car if resident has one AND there is a parking spot
                 if (resident.data.hasCar) {
-                    const carPos = this.getNearestRoadPoint(lot);
-                    const car = new Vehicle({
-                        id: `car_${residentId}`,
-                        type: AgentType.RESIDENT,
-                        position: carPos,
-                        speed: 40 + Math.random() * 20,
-                    }, false);
-                    resident.data.car = car;
-                    this.vehicles.push(car);
+                    if (lot.parkingSpot) {
+                        const carPos = new THREE.Vector3(lot.parkingSpot.x, 1, lot.parkingSpot.y);
+                        // Default rotation for now
+
+                        const car = new Vehicle({
+                            id: `car_${residentId}`,
+                            type: AgentType.RESIDENT,
+                            position: carPos,
+                            speed: 40 + Math.random() * 20,
+                        }, false);
+
+                        car.updateMesh();
+                        resident.data.car = car;
+                        this.vehicles.push(car);
+                    } else {
+                        // Revoke car if no off-street parking
+                        resident.data.hasCar = false;
+                    }
                 }
 
                 residentId++;
                 residentsToPlace--;
             }
-        }
 
-        // Create tourists (they're visitors, spawn on roads)
-        for (let i = 0; i < config.touristCount; i++) {
-            // Random position on a road would be set by PathfindingSystem
-            const pos = new THREE.Vector3(0, 1, 0);
+            const newOccupancy = current + householdSize;
+            lotOccupancy.set(lot.id, newOccupancy);
 
-            const tourist = new Agent({
-                id: `tourist_${i}`,
-                type: AgentType.TOURIST,
-                position: pos,
-                speed: 6 + Math.random() * 4,
-            });
-            this.tourists.push(tourist);
-
-            // Some tourists have rental cars
-            if (Math.random() < 0.4) {
-                const car = new Vehicle({
-                    id: `tourist_car_${i}`,
-                    type: AgentType.TOURIST,
-                    position: pos.clone(),
-                    speed: 35 + Math.random() * 15,
-                }, true); // isTourist = true
-                this.vehicles.push(car);
+            // Remove lot from available list if now full
+            if (newOccupancy >= maxOccupantsPerLot) {
+                const idx = availableLots.indexOf(lot);
+                if (idx >= 0) availableLots.splice(idx, 1);
             }
         }
 
-        console.log(`Population: ${this.residents.length} residents, ${this.tourists.length} tourists, ${this.vehicles.length} vehicles`);
+        console.log(`Population: ${this.residents.length} residents, ${this.vehicles.length} vehicles`);
 
         return {
             residents: this.residents,
-            tourists: this.tourists,
+            tourists: [],
             vehicles: this.vehicles
         };
     }

@@ -15,18 +15,21 @@ interface HighlightSpec {
 
 export class SelectionHighlighter {
     private group: THREE.Group;
-    private ringByKey: Map<string, THREE.Mesh> = new Map();
+    private visualsByKey: Map<string, THREE.Group> = new Map();
     private specs: HighlightSpec[] = [];
     private residents: Resident[] = [];
     private vehicles: Vehicle[] = [];
     private lots: Lot[] = [];
     private enabled: boolean = true;
     private lastSelection: { type: string; data: any } | null = null;
+    private glowTextures: Map<HighlightKind, THREE.Texture> = new Map();
 
     constructor(parent: THREE.Group) {
         this.group = new THREE.Group();
         this.group.name = 'SelectionHighlighter';
         parent.add(this.group);
+        this.glowTextures.set('primary', this.createGlowTexture('rgba(255, 215, 106, 0.9)'));
+        this.glowTextures.set('related', this.createGlowTexture('rgba(95, 214, 255, 0.8)'));
     }
 
     setData(residents: Resident[], vehicles: Vehicle[], lots: Lot[]) {
@@ -80,42 +83,68 @@ export class SelectionHighlighter {
         if (this.specs.length === 0) return;
 
         const pulse = 0.06 + Math.sin(Date.now() * 0.004) * 0.06;
+        const glow = 0.55 + Math.sin(Date.now() * 0.005) * 0.15;
 
         this.specs.forEach(spec => {
-            const ring = this.ringByKey.get(spec.key);
-            if (!ring) return;
+            const visual = this.visualsByKey.get(spec.key);
+            if (!visual) return;
             if (spec.object) {
-                ring.position.copy(spec.object.position);
+                visual.position.copy(spec.object.position);
             } else if (spec.position) {
-                ring.position.copy(spec.position);
+                visual.position.copy(spec.position);
             }
-            ring.position.y = 1.5;
-            ring.scale.set(1 + pulse, 1 + pulse, 1 + pulse);
+            // Lift above lots (y=2) to prevent z-fighting
+            visual.position.y = 2.5;
+            visual.scale.set(1 + pulse, 1 + pulse, 1 + pulse);
+            visual.traverse(obj => {
+                if (obj instanceof THREE.Sprite && obj.material instanceof THREE.SpriteMaterial) {
+                    obj.material.opacity = glow;
+                }
+            });
         });
     }
 
     private syncRings() {
         const nextKeys = new Set(this.specs.map(spec => spec.key));
 
-        Array.from(this.ringByKey.entries()).forEach(([key, ring]) => {
+        Array.from(this.visualsByKey.entries()).forEach(([key, visual]) => {
             if (!nextKeys.has(key)) {
-                this.group.remove(ring);
-                ring.geometry.dispose();
-                (ring.material as THREE.Material).dispose();
-                this.ringByKey.delete(key);
+                this.group.remove(visual);
+                visual.traverse(obj => {
+                    if (obj instanceof THREE.Mesh) {
+                        obj.geometry.dispose();
+                        (obj.material as THREE.Material).dispose();
+                    }
+                    if (obj instanceof THREE.Sprite) {
+                        (obj.material as THREE.Material).dispose();
+                    }
+                });
+                this.visualsByKey.delete(key);
             }
         });
 
         this.specs.forEach(spec => {
-            if (!this.ringByKey.has(spec.key)) {
-                const ring = this.createRing(spec.radius, spec.kind);
-                this.ringByKey.set(spec.key, ring);
-                this.group.add(ring);
+            if (!this.visualsByKey.has(spec.key)) {
+                const visual = this.createVisual(spec.radius, spec.kind);
+                this.visualsByKey.set(spec.key, visual);
+                this.group.add(visual);
             }
         });
     }
 
-    private createRing(radius: number, kind: HighlightKind): THREE.Mesh {
+    private createVisual(radius: number, kind: HighlightKind): THREE.Group {
+        const group = new THREE.Group();
+        const ring = this.createRing(radius, kind);
+        const outer = this.createRing(radius * 1.2, kind, 0.35);
+        const sprite = this.createGlowSprite(kind, radius * 2.2);
+        const beacon = this.createBeacon(kind, radius * 0.6);
+        sprite.position.y = 6;
+        beacon.position.y = 2;
+        group.add(ring, outer, sprite, beacon);
+        return group;
+    }
+
+    private createRing(radius: number, kind: HighlightKind, opacity: number = 0.85): THREE.Mesh {
         const inner = Math.max(2, radius * 0.78);
         const outer = Math.max(inner + 2, radius);
         const geometry = new THREE.RingGeometry(inner, outer, 48);
@@ -123,13 +152,64 @@ export class SelectionHighlighter {
         const material = new THREE.MeshBasicMaterial({
             color,
             transparent: true,
-            opacity: kind === 'primary' ? 0.85 : 0.65,
+            opacity: kind === 'primary' ? opacity : opacity * 0.8,
             side: THREE.DoubleSide,
             depthWrite: false,
         });
         const mesh = new THREE.Mesh(geometry, material);
         mesh.rotation.x = -Math.PI / 2;
         return mesh;
+    }
+
+    private createGlowSprite(kind: HighlightKind, size: number): THREE.Sprite {
+        const texture = this.glowTextures.get(kind);
+        const material = new THREE.SpriteMaterial({
+            map: texture || null,
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.65,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+        const sprite = new THREE.Sprite(material);
+        sprite.scale.set(size, size, 1);
+        return sprite;
+    }
+
+    private createBeacon(kind: HighlightKind, radius: number): THREE.Mesh {
+        const geometry = new THREE.CylinderGeometry(radius, radius * 0.6, 10, 18, 1, true);
+        const color = kind === 'primary' ? 0xffd76a : 0x5fd6ff;
+        const material = new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.35,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        return mesh;
+    }
+
+    private createGlowTexture(color: string): THREE.Texture {
+        const size = 128;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return new THREE.Texture();
+
+        const gradient = ctx.createRadialGradient(size / 2, size / 2, 6, size / 2, size / 2, size / 2);
+        gradient.addColorStop(0, color);
+        gradient.addColorStop(0.55, 'rgba(255,255,255,0.08)');
+        gradient.addColorStop(1, 'rgba(255,255,255,0)');
+
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, size, size);
+
+        const texture = new THREE.Texture(canvas);
+        texture.needsUpdate = true;
+        return texture;
     }
 
     private specForResident(resident: Resident, kind: HighlightKind): HighlightSpec {
