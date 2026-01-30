@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { Lot, LotState, AgentType } from '../types';
-import { Inspector } from '../ui/Inspector';
 import { ExplorerEntityRef } from '../ui/EntityExplorer';
 
 export type FollowCallback = (target: THREE.Object3D | null, entity: ExplorerEntityRef | null) => void;
@@ -27,9 +26,9 @@ export class InteractionSystem {
     pointer: THREE.Vector2;
     camera: THREE.Camera;
 
-    inspector: Inspector;
     scene: THREE.Scene;
     pathLine?: THREE.Line;
+    pathLines: THREE.Line[] = [];
     tooltip: HTMLDivElement;
 
     private onFollowCallbacks: FollowCallback[] = [];
@@ -41,7 +40,6 @@ export class InteractionSystem {
         this.scene = scene;
         this.raycaster = new THREE.Raycaster();
         this.pointer = new THREE.Vector2();
-        this.inspector = new Inspector();
 
         // Create Tooltip
         this.tooltip = document.createElement('div');
@@ -230,15 +228,27 @@ export class InteractionSystem {
 
     showAgentPath(agent: any) {
         this.clearPath();
-        if (!agent.path || agent.path.length === 0) return;
 
-        const points = [agent.mesh.position.clone(), ...agent.path];
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color: 0xffff00 });
-        this.pathLine = new THREE.Line(geometry, material);
-        // Lift slightly above ground/road
-        this.pathLine.position.y = 1.5;
-        this.scene.add(this.pathLine);
+        const start = agent.carGroup ? agent.carGroup.position.clone() : agent.mesh.position.clone();
+        const mainPath = agent.path && agent.path.length > 0 ? [start, ...agent.path] : null;
+        const prePath = agent.prePath && agent.prePath.length > 0 ? [start, ...agent.prePath] : null;
+        const parkingLeg = agent.parkingLeg && agent.parkingLeg.length > 0 ? [agent.parkingLeg[0], ...agent.parkingLeg] : null;
+        const targetPath = !mainPath && agent.target ? [start, agent.target] : null;
+
+        const lines: Array<{ points: THREE.Vector3[]; color: number }> = [];
+        if (prePath && prePath.length > 1) lines.push({ points: prePath, color: 0x55d6ff });
+        if (mainPath && mainPath.length > 1) lines.push({ points: mainPath, color: 0xffd76a });
+        if (parkingLeg && parkingLeg.length > 1) lines.push({ points: parkingLeg, color: 0x44ff88 });
+        if (targetPath && targetPath.length > 1) lines.push({ points: targetPath, color: 0xffffff });
+
+        lines.forEach(line => {
+            const geometry = new THREE.BufferGeometry().setFromPoints(line.points);
+            const material = new THREE.LineBasicMaterial({ color: line.color });
+            const mesh = new THREE.Line(geometry, material);
+            mesh.position.y = 1.5;
+            this.scene.add(mesh);
+            this.pathLines.push(mesh);
+        });
     }
 
     clearPath() {
@@ -246,6 +256,14 @@ export class InteractionSystem {
             this.scene.remove(this.pathLine);
             this.pathLine.geometry.dispose();
             this.pathLine = undefined;
+        }
+        if (this.pathLines.length > 0) {
+            this.pathLines.forEach(line => {
+                this.scene.remove(line);
+                line.geometry.dispose();
+                (line.material as THREE.Material).dispose();
+            });
+            this.pathLines = [];
         }
     }
 
@@ -298,7 +316,6 @@ export class InteractionSystem {
         const emitFollow = options.emitFollow !== false;
 
         if (entity) {
-            this.inspector.show(entity);
             if (entity.type === 'agent' || entity.type === 'vehicle' || entity.type === 'resident' || entity.type === 'tourist') {
                 this.showAgentPath(entity.data);
                 const targetMesh = entity.type === 'vehicle' ? entity.data.carGroup : entity.data.mesh;
@@ -312,7 +329,6 @@ export class InteractionSystem {
                 this.emitFollow(null, null);
             }
         } else {
-            this.inspector.hide();
             this.clearPath();
             this.emitFollow(null, null);
         }

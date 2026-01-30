@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RoadSegment, Lot, Point, LotUsage } from "../types";
+import { RoadSegment, Lot, Point, LotUsage, AgentType } from "../types";
 import { RoadGraph } from "./RoadGraph";
 import { Resident, ResidentState } from '../entities/Resident';
 import { PedestrianGraph } from './PedestrianGraph';
@@ -17,6 +17,8 @@ export class PathfindingSystem {
         tourist: 0.01,
         other: 0.05,
     };
+    private businessHours = { open: 9, close: 20 };
+    private currentHour: number = 12;
     private debugGroup: THREE.Group | null = null;
     private parkingLegGroup: THREE.Group | null = null;
     private parkingLegMaterial: THREE.LineBasicMaterial | null = null;
@@ -25,6 +27,17 @@ export class PathfindingSystem {
         this.roads = roads;
         this.graph = new RoadGraph(roads);
         this.pedestrianGraph = new PedestrianGraph(roads, this.sidewalkOffset);
+    }
+
+
+    // Coordinate system: SVG (x, y) maps to 3D (x, height, y).
+    // All agents/pathing are in SVG coordinates; WorldRenderer applies centering.
+    private toSvg(point: THREE.Vector3): Point {
+        return { x: point.x, y: point.z };
+    }
+
+    private toWorld(point: Point, height: number = 1): THREE.Vector3 {
+        return new THREE.Vector3(point.x, height, point.y);
     }
 
     setTrespassChances(chances: { resident?: number; tourist?: number; other?: number }) {
@@ -42,13 +55,26 @@ export class PathfindingSystem {
         this.pedestrianGraph = new PedestrianGraph(this.roads, this.sidewalkOffset);
     }
 
+    setCurrentHour(hour: number) {
+        this.currentHour = hour;
+    }
+
+    setBusinessHours(open: number, close: number) {
+        this.businessHours = { open, close };
+    }
+
+    private isCommercialOpen(): boolean {
+        const { open, close } = this.businessHours;
+        return this.currentHour >= open && this.currentHour < close;
+    }
+
     getRandomPointOnRoad(): THREE.Vector3 {
         if (this.roads.length === 0) return new THREE.Vector3();
         const road = this.roads[Math.floor(Math.random() * this.roads.length)];
         const localX = road.x + Math.random() * road.width;
         const localY = road.y + Math.random() * road.height;
         // Coordinate transform: SVG (x, y) → 3D (x, height, y)
-        return new THREE.Vector3(localX, 1, localY);
+        return this.toWorld({ x: localX, y: localY }, 1);
     }
 
     getRandomPointOnSidewalk(): THREE.Vector3 {
@@ -58,36 +84,39 @@ export class PathfindingSystem {
             const useLeft = Math.random() < 0.5;
             const x = useLeft ? road.x - this.sidewalkOffset : road.x + road.width + this.sidewalkOffset;
             const y = road.y + Math.random() * road.height;
-            return new THREE.Vector3(x, 1, y);
+            return this.toWorld({ x, y }, 1);
         }
         const useTop = Math.random() < 0.5;
         const y = useTop ? road.y - this.sidewalkOffset : road.y + road.height + this.sidewalkOffset;
         const x = road.x + Math.random() * road.width;
-        return new THREE.Vector3(x, 1, y);
+        return this.toWorld({ x, y }, 1);
     }
 
     // Get a path from current position to a specific 3D destination (road graph)
     getPathTo(from: THREE.Vector3, to: THREE.Vector3): THREE.Vector3[] {
-        // Convert 3D to SVG: svgX = x, svgY = z
-        const fromSvg = { x: from.x, y: from.z };
-        const toSvg = { x: to.x, y: to.z };
+        const fromSvg = this.toSvg(from);
+        const toSvg = this.toSvg(to);
 
         const pathPoints = this.graph.findPath(fromSvg, toSvg);
 
         if (pathPoints.length > 1) {
-            // Convert SVG path to 3D: (x, height, y)
-            return pathPoints.slice(1).map(p => new THREE.Vector3(p.x, 1, p.y));
+            // Convert SVG path to 3D: (x, height, -y)
+            return pathPoints.slice(1).map(p => this.toWorld(p, 1));
         }
         return [];
     }
 
     // Pedestrian path using sidewalk graph with gate transitions
     getPedestrianPathTo(from: THREE.Vector3, to: THREE.Vector3, lots: Lot[], agent?: any): THREE.Vector3[] {
-        const fromSvg = { x: from.x, y: from.z };
-        const toSvg = { x: to.x, y: to.z };
+        const fromSvg = this.toSvg(from);
+        const toSvg = this.toSvg(to);
 
         const prePath: THREE.Vector3[] = [];
         const postPath: THREE.Vector3[] = [];
+        if (agent) {
+            agent.prePath = [];
+            agent.lastGate = null;
+        }
 
         const fromLot = this.findLotContainingPoint(fromSvg, lots);
         let toLot = this.findLotContainingPoint(toSvg, lots);
@@ -97,14 +126,15 @@ export class PathfindingSystem {
         if (fromLot) {
             const gate = this.getNearestGate(fromLot, fromSvg);
             if (gate) {
-                prePath.push(new THREE.Vector3(gate.x, 1, gate.y));
+                prePath.push(this.toWorld(gate, 1));
                 startPoint = gate;
+                if (agent) agent.lastGate = gate;
             }
         }
 
         if (!this.isOnSidewalk(startPoint.x, startPoint.y)) {
             const nearestSidewalk = this.getNearestSidewalkPoint(startPoint.x, startPoint.y);
-            prePath.push(new THREE.Vector3(nearestSidewalk.x, 1, nearestSidewalk.y));
+            prePath.push(this.toWorld(nearestSidewalk, 1));
             startPoint = nearestSidewalk;
         }
 
@@ -117,9 +147,9 @@ export class PathfindingSystem {
                     : this.getNearestSidewalkPoint(gate.x, gate.y);
                 endPoint = gateSidewalk;
                 if (gateSidewalk.x !== gate.x || gateSidewalk.y !== gate.y) {
-                    postPath.push(new THREE.Vector3(gate.x, 1, gate.y));
+                    postPath.push(this.toWorld(gate, 1));
                 }
-                postPath.push(new THREE.Vector3(toSvg.x, 2, toSvg.y));
+                postPath.push(this.toWorld(toSvg, 2));
             }
         } else if (toLot) {
             // Destination lot not allowed: stay on sidewalk at the closest point
@@ -128,21 +158,25 @@ export class PathfindingSystem {
         } else if (!this.isOnSidewalk(toSvg.x, toSvg.y)) {
             const nearestSidewalk = this.getNearestSidewalkPoint(toSvg.x, toSvg.y);
             endPoint = nearestSidewalk;
-            postPath.push(new THREE.Vector3(toSvg.x, 1, toSvg.y));
+            postPath.push(this.toWorld(toSvg, 1));
         }
 
         const pathPoints = this.pedestrianGraph.findPath(startPoint, endPoint);
         const graphPath = pathPoints.length > 1
-            ? pathPoints.slice(1).map(p => new THREE.Vector3(p.x, 1, p.y))
+            ? pathPoints.slice(1).map(p => this.toWorld(p, 1))
             : [];
+
+        if (agent) {
+            agent.prePath = [...prePath];
+        }
 
         return [...prePath, ...graphPath, ...postPath];
     }
 
     // Vehicle path: road graph to lot access point, then into parking spot
     getVehiclePathTo(from: THREE.Vector3, to: THREE.Vector3, lots: Lot[], vehicle?: Vehicle): THREE.Vector3[] {
-        const fromSvg = { x: from.x, y: from.z };
-        const toSvg = { x: to.x, y: to.z };
+        const fromSvg = this.toSvg(from);
+        const toSvg = this.toSvg(to);
         const destinationLot = this.findLotContainingPoint(toSvg, lots);
 
         if (!destinationLot) {
@@ -165,23 +199,24 @@ export class PathfindingSystem {
 
         if (!this.isOnRoad(startPoint.x, startPoint.y)) {
             const nearestRoad = this.getNearestRoadPoint(startPoint.x, startPoint.y);
-            prePath.push(new THREE.Vector3(nearestRoad.x, 1, nearestRoad.y));
+            prePath.push(this.toWorld(nearestRoad, 1));
             startPoint = nearestRoad;
         }
 
         const pathPoints = this.graph.findPath(startPoint, accessPoint);
         const graphPath = pathPoints.length > 1
-            ? pathPoints.slice(1).map(p => new THREE.Vector3(p.x, 1, p.y))
+            ? pathPoints.slice(1).map(p => this.toWorld(p, 1))
             : [];
 
         const finalLeg: THREE.Vector3[] = [
-            new THREE.Vector3(accessPoint.x, 1, accessPoint.y),
-            new THREE.Vector3(parkingSpot.x, 1, parkingSpot.y),
-            new THREE.Vector3(toSvg.x, 1, toSvg.y),
+            this.toWorld(accessPoint, 1),
+            this.toWorld(parkingSpot, 1),
+            this.toWorld(toSvg, 1),
         ];
 
         if (vehicle) {
             (vehicle as any).parkingLeg = finalLeg.map(p => p.clone());
+            (vehicle as any).prePath = [...prePath];
         }
 
         return [...prePath, ...graphPath, ...finalLeg];
@@ -269,6 +304,9 @@ export class PathfindingSystem {
                 }
             }
 
+            // Initialize parking spots array
+            lot.parkingSpots = [];
+
             // 2. Identify Short Edges & Check Road Proximity
             edges.forEach(edge => {
                 // Check if edge faces a road
@@ -291,40 +329,66 @@ export class PathfindingSystem {
                     if (edge.length < maxLength * 0.8 || Math.abs(edge.length - maxLength) < 5) {
                         lot.gatePositions?.push(edge.midpoint);
 
-                        // Compute parking spot if not set
-                        if (!lot.parkingSpot) {
-                            const dx = cx - edge.midpoint.x;
-                            const dy = cy - edge.midpoint.y;
-                            const len = Math.sqrt(dx * dx + dy * dy);
+                        // Compute parking spots along road-facing edge
+                        const dx = cx - edge.midpoint.x;
+                        const dy = cy - edge.midpoint.y;
+                        const len = Math.sqrt(dx * dx + dy * dy);
 
-                            if (len > 0) {
-                                // Position car inside lot, facing the road
+                        if (len > 0 && lot.parkingSpots!.length < 2) {
+                            const rotation = Math.atan2(-dx, -dy);
+                            const perpX = -dy / len;
+                            const perpY = dx / len;
+                            const spacing = 10;
+
+                            // Create 2 parking spots side by side
+                            for (let i = -1; i <= 1; i += 2) {
+                                lot.parkingSpots!.push({
+                                    x: edge.midpoint.x + (dx / len) * 20 + perpX * spacing * i,
+                                    y: edge.midpoint.y + (dy / len) * 20 + perpY * spacing * i,
+                                    rotation,
+                                    occupiedBy: null,
+                                });
+                            }
+
+                            // Legacy single spot for backwards compatibility
+                            if (!lot.parkingSpot) {
                                 lot.parkingSpot = {
                                     x: edge.midpoint.x + (dx / len) * 20,
                                     y: edge.midpoint.y + (dy / len) * 20
                                 };
-                                // Rotation: car faces outward toward road (opposite of inward direction)
-                                // In 3D: rotation.y = atan2(dx, dy) for SVG->3D where z=y
-                                lot.parkingRotation = Math.atan2(-dx, -dy);
+                                lot.parkingRotation = rotation;
                             }
                         }
                     }
                 }
             });
 
-            // Fallback: if no parking spot found, create one near center facing closest road
-            if (!lot.parkingSpot && closestRoadPoint) {
+            // Fallback: if no parking spots found, create two near center facing closest road
+            if (lot.parkingSpots!.length === 0 && closestRoadPoint) {
                 const dx = closestRoadPoint.x - cx;
                 const dy = closestRoadPoint.y - cy;
                 const len = Math.sqrt(dx * dx + dy * dy);
                 if (len > 0) {
-                    // Park near center, slightly toward road
+                    const rotation = Math.atan2(dx, dy);
+                    const perpX = -dy / len;
+                    const perpY = dx / len;
+                    const spacing = 10;
+
+                    for (let i = -1; i <= 1; i += 2) {
+                        lot.parkingSpots!.push({
+                            x: cx + (dx / len) * 10 + perpX * spacing * i,
+                            y: cy + (dy / len) * 10 + perpY * spacing * i,
+                            rotation,
+                            occupiedBy: null,
+                        });
+                    }
+
+                    // Legacy single spot
                     lot.parkingSpot = {
                         x: cx + (dx / len) * 10,
                         y: cy + (dy / len) * 10
                     };
-                    // Face toward road
-                    lot.parkingRotation = Math.atan2(dx, dy);
+                    lot.parkingRotation = rotation;
                 }
             }
         });
@@ -455,10 +519,12 @@ export class PathfindingSystem {
 
     private isLotAllowedForPedestrian(agent: any, lot: Lot): boolean {
         if (!agent) return lot.usage !== LotUsage.RESIDENTIAL;
+        if (agent.type === AgentType.CAT) return true;
         if (Array.isArray(agent.allowedLots) && agent.allowedLots.includes(lot.id)) return true;
         const isResident = agent.data?.homeLot;
         if (isResident && agent.data.homeLot.id === lot.id) return true;
-        if (lot.usage === LotUsage.PUBLIC || lot.usage === LotUsage.COMMERCIAL) return true;
+        if (lot.usage === LotUsage.PUBLIC) return true;
+        if (lot.usage === LotUsage.COMMERCIAL) return this.isCommercialOpen();
         if (lot.usage === LotUsage.LODGING && agent.data?.lodgingLot?.id === lot.id) return true;
         const type = agent.type || '';
         const baseTrespass = type === 'resident'
@@ -490,16 +556,20 @@ export class PathfindingSystem {
 
     private getRandomPedestrianDestination(agent: any): THREE.Vector3 {
         const homeLot = agent.data?.homeLot;
+        if (agent.type === AgentType.CAT && homeLot && Math.random() < 0.5) {
+            const point = this.getRandomPointInLot(homeLot);
+            return this.toWorld(point, 2);
+        }
         if (homeLot && Math.random() < 0.6) {
             const point = this.getRandomPointInLot(homeLot);
-            return new THREE.Vector3(point.x, 2, point.y);
+            return this.toWorld(point, 2);
         }
 
         const allowedLots = this.lots.filter(lot => this.isLotAllowedForPedestrian(agent, lot));
-        if (allowedLots.length > 0 && Math.random() < 0.25) {
+        if (allowedLots.length > 0 && Math.random() < (agent.type === AgentType.CAT ? 0.35 : 0.25)) {
             const lot = allowedLots[Math.floor(Math.random() * allowedLots.length)];
             const point = this.getRandomPointInLot(lot);
-            return new THREE.Vector3(point.x, 2, point.y);
+            return this.toWorld(point, 2);
         }
 
         return this.getRandomPointOnSidewalk();
@@ -633,9 +703,9 @@ export class PathfindingSystem {
             // If no path and no target, pick a new destination
             if ((!agent.path || agent.path.length === 0) && !agent.target) {
                 // Get current position in SVG coordinates
-                // 3D (x, y, z) → SVG (x, y): svgX = position.x, svgY = position.z
-                const currentSvgX = agent.position.x;
-                const currentSvgY = agent.position.z;
+            // 3D (x, y, z) → SVG (x, y): svgX = position.x, svgY = position.z
+            const currentSvgX = agent.position.x;
+            const currentSvgY = agent.position.z;
 
                 const isPedestrian = this.isPedestrian(agent);
                 const onNetwork = isPedestrian
@@ -651,14 +721,14 @@ export class PathfindingSystem {
                     const gatePoint = currentLot ? this.getNearestGate(currentLot, { x: currentSvgX, y: currentSvgY }) : null;
 
                     if (gatePoint) {
-                        prePath.push(new THREE.Vector3(gatePoint.x, 1, gatePoint.y));
+                        prePath.push(this.toWorld(gatePoint, 1));
                         startPoint = gatePoint;
                     }
 
                     const nearest = isPedestrian
                         ? this.getNearestSidewalkPoint(startPoint.x, startPoint.y)
                         : this.getNearestRoadPoint(startPoint.x, startPoint.y);
-                    prePath.push(new THREE.Vector3(nearest.x, 1, nearest.y));
+                    prePath.push(this.toWorld(nearest, 1));
                     startPoint = nearest;
                 }
 
@@ -667,9 +737,10 @@ export class PathfindingSystem {
 
                 // Find path using road graph from road point to destination
                 // destination is in 3D coords, convert back to SVG for pathfinding: svgY = z
+                const destinationSvg = this.toSvg(destination);
                 const pathPoints = isPedestrian
-                    ? this.pedestrianGraph.findPath(startPoint, { x: destination.x, y: destination.z })
-                    : this.graph.findPath(startPoint, { x: destination.x, y: destination.z });
+                    ? this.pedestrianGraph.findPath(startPoint, destinationSvg)
+                    : this.graph.findPath(startPoint, destinationSvg);
 
                 // Debug logging (first 5 agents)
                 if (this.debugLogCount < 5) {
@@ -686,7 +757,7 @@ export class PathfindingSystem {
                 if (pathPoints.length > 1) {
                     // Combine pre-path (to road) with graph path
                     // SVG → 3D: (x, 1, y)
-                    const graphPath = pathPoints.slice(1).map(p => new THREE.Vector3(p.x, 1, p.y));
+                    const graphPath = pathPoints.slice(1).map(p => this.toWorld(p, 1));
                     agent.path = [...prePath, ...graphPath];
                 } else if (prePath.length > 0) {
                     // At least go to the road
@@ -706,11 +777,22 @@ export class PathfindingSystem {
             if (agent.path && agent.path.length > 0 && !agent.target) {
                 const next = agent.path.shift();
                 if (next && this.isPedestrian(agent)) {
-                    const nextLot = this.findLotContainingPoint({ x: next.x, y: next.z }, this.lots);
-                    if (nextLot && !this.isLotAllowedForPedestrian(agent, nextLot)) {
-                        agent.path = [];
-                        agent.target = null;
-                        return;
+                    let isPrePathPoint = false;
+                    if (agent.prePath && agent.prePath.length > 0) {
+                        const prePoint = agent.prePath[0];
+                        if (prePoint && prePoint.distanceTo(next) < 2) {
+                            isPrePathPoint = true;
+                            agent.prePath.shift();
+                        }
+                    }
+                    if (!isPrePathPoint) {
+                        const nextSvg = this.toSvg(next);
+                        const nextLot = this.findLotContainingPoint(nextSvg, this.lots);
+                        if (nextLot && !this.isLotAllowedForPedestrian(agent, nextLot)) {
+                            agent.path = [];
+                            agent.target = null;
+                            return;
+                        }
                     }
                 }
                 agent.target = next || null;
@@ -748,6 +830,14 @@ export class PathfindingSystem {
         this.parkingLegMaterial = null;
     }
 
+    getPedestrianDebugVisualization(): THREE.Group {
+        return this.pedestrianGraph.createDebugVisualization();
+    }
+
+    removePedestrianDebugVisualization() {
+        this.pedestrianGraph.removeDebugVisualization();
+    }
+
     private updateParkingLegDebug(agents: any[]) {
         if (!this.parkingLegGroup) return;
         while (this.parkingLegGroup.children.length > 0) {
@@ -768,5 +858,70 @@ export class PathfindingSystem {
             const line = new THREE.Line(geometry, material);
             this.parkingLegGroup!.add(line);
         });
+    }
+
+    // Parking spot management
+
+    /**
+     * Find and reserve an available parking spot on a lot
+     * Returns the spot and its position, or null if none available
+     */
+    reserveParkingSpot(lot: Lot, vehicleId: string): { x: number; y: number; rotation: number } | null {
+        if (!lot.parkingSpots || lot.parkingSpots.length === 0) {
+            // Fallback to legacy single spot
+            if (lot.parkingSpot) {
+                return {
+                    x: lot.parkingSpot.x,
+                    y: lot.parkingSpot.y,
+                    rotation: lot.parkingRotation || 0
+                };
+            }
+            return null;
+        }
+
+        // Find first available spot
+        const availableSpot = lot.parkingSpots.find(spot => spot.occupiedBy === null);
+        if (availableSpot) {
+            availableSpot.occupiedBy = vehicleId;
+            return {
+                x: availableSpot.x,
+                y: availableSpot.y,
+                rotation: availableSpot.rotation
+            };
+        }
+
+        return null; // All spots occupied
+    }
+
+    /**
+     * Release a parking spot when a vehicle leaves
+     */
+    releaseParkingSpot(lot: Lot, vehicleId: string): void {
+        if (!lot.parkingSpots) return;
+
+        const spot = lot.parkingSpots.find(s => s.occupiedBy === vehicleId);
+        if (spot) {
+            spot.occupiedBy = null;
+        }
+    }
+
+    /**
+     * Check if a lot has any available parking spots
+     */
+    hasAvailableParking(lot: Lot): boolean {
+        if (!lot.parkingSpots || lot.parkingSpots.length === 0) {
+            return lot.parkingSpot !== undefined;
+        }
+        return lot.parkingSpots.some(spot => spot.occupiedBy === null);
+    }
+
+    /**
+     * Get the number of available parking spots on a lot
+     */
+    getAvailableParkingCount(lot: Lot): number {
+        if (!lot.parkingSpots || lot.parkingSpots.length === 0) {
+            return lot.parkingSpot ? 1 : 0;
+        }
+        return lot.parkingSpots.filter(spot => spot.occupiedBy === null).length;
     }
 }

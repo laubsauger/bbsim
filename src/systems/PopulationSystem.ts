@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Lot, LotState, AgentType } from '../types';
+import { Lot, LotState, AgentType, LotUsage } from '../types';
 import { Resident } from '../entities/Resident';
 import { Vehicle } from '../entities/Vehicle';
 import { Agent } from '../entities/Agent';
@@ -13,15 +13,17 @@ export class PopulationSystem {
     residents: Resident[] = [];
     tourists: Agent[] = [];
     vehicles: Vehicle[] = [];
+    pets: Agent[] = [];
     lots: Lot[];
 
     constructor(lots: Lot[]) {
         this.lots = lots;
     }
 
-    populate(config: PopulationConfig): { residents: Resident[], tourists: Agent[], vehicles: Vehicle[] } {
+    populate(config: PopulationConfig): { residents: Resident[], tourists: Agent[], vehicles: Vehicle[], pets: Agent[] } {
         this.residents = [];
         this.vehicles = [];
+        this.pets = [];
 
         // Get lots that can have residents (not empty/for_sale)
         const habitableLots = this.lots.filter(lot =>
@@ -100,9 +102,9 @@ export class PopulationSystem {
 
                 // Create car if resident has one AND there is a parking spot
                 if (resident.data.hasCar) {
-                    if (lot.parkingSpot) {
-                        const carPos = new THREE.Vector3(lot.parkingSpot.x, 1, lot.parkingSpot.y);
-                        // Default rotation for now
+                    const parkingSpot = this.reserveParkingSpot(lot, `car_${residentId}`);
+                    if (parkingSpot) {
+                        const carPos = new THREE.Vector3(parkingSpot.x, 1, parkingSpot.y);
 
                         const car = new Vehicle({
                             id: `car_${residentId}`,
@@ -111,11 +113,12 @@ export class PopulationSystem {
                             speed: 40 + Math.random() * 20,
                         }, false);
 
+                        car.targetRotation = parkingSpot.rotation;
                         car.updateMesh();
                         resident.data.car = car;
                         this.vehicles.push(car);
                     } else {
-                        // Revoke car if no off-street parking
+                        // Revoke car if no off-street parking available
                         resident.data.hasCar = false;
                     }
                 }
@@ -134,12 +137,15 @@ export class PopulationSystem {
             }
         }
 
-        console.log(`Population: ${this.residents.length} residents, ${this.vehicles.length} vehicles`);
+        this.spawnPets();
+
+        console.log(`Population: ${this.residents.length} residents, ${this.vehicles.length} vehicles, ${this.pets.length} pets`);
 
         return {
             residents: this.residents,
             tourists: [],
-            vehicles: this.vehicles
+            vehicles: this.vehicles,
+            pets: this.pets
         };
     }
 
@@ -162,11 +168,86 @@ export class PopulationSystem {
         return this.getLotCenter(lot);
     }
 
+    private spawnPets() {
+        const homeLots = this.lots.filter(lot => lot.usage === LotUsage.RESIDENTIAL);
+        if (homeLots.length === 0) return;
+
+        const dogCount = Math.floor(this.residents.length * 0.08);
+        const catCount = Math.floor(this.residents.length * 0.12);
+        let petId = 0;
+
+        const spawnPet = (type: AgentType) => {
+            const lot = homeLots[Math.floor(Math.random() * homeLots.length)];
+            const lotCenter = this.getLotCenter(lot);
+            const pos = new THREE.Vector3(
+                lotCenter.x + (Math.random() - 0.5) * 16,
+                2,
+                lotCenter.z + (Math.random() - 0.5) * 16
+            );
+
+            const pet = new Agent({
+                id: `${type}_${petId++}`,
+                type,
+                position: pos,
+                speed: type === AgentType.DOG ? 7 + Math.random() * 3 : 6 + Math.random() * 2,
+            });
+            (pet as any).data = { homeLot: lot };
+            this.pets.push(pet);
+        };
+
+        for (let i = 0; i < dogCount; i++) {
+            spawnPet(AgentType.DOG);
+        }
+        for (let i = 0; i < catCount; i++) {
+            spawnPet(AgentType.CAT);
+        }
+    }
+
     getResidentByLot(lot: Lot): Resident[] {
         return this.residents.filter(r => r.data.homeLot.id === lot.id);
     }
 
     getVehicleByOwner(resident: Resident): Vehicle | undefined {
         return resident.data.car;
+    }
+
+    /**
+     * Reserve an available parking spot on a lot
+     */
+    private reserveParkingSpot(lot: Lot, vehicleId: string): { x: number; y: number; rotation: number } | null {
+        if (lot.parkingSpots && lot.parkingSpots.length > 0) {
+            const availableSpot = lot.parkingSpots.find(spot => spot.occupiedBy === null);
+            if (availableSpot) {
+                availableSpot.occupiedBy = vehicleId;
+                return {
+                    x: availableSpot.x,
+                    y: availableSpot.y,
+                    rotation: availableSpot.rotation
+                };
+            }
+            return null;
+        }
+
+        // Fallback to legacy single spot
+        if (lot.parkingSpot) {
+            return {
+                x: lot.parkingSpot.x,
+                y: lot.parkingSpot.y,
+                rotation: lot.parkingRotation || 0
+            };
+        }
+
+        return null;
+    }
+
+    /**
+     * Release a parking spot when a vehicle leaves
+     */
+    releaseParkingSpot(lot: Lot, vehicleId: string): void {
+        if (!lot.parkingSpots) return;
+        const spot = lot.parkingSpots.find(s => s.occupiedBy === vehicleId);
+        if (spot) {
+            spot.occupiedBy = null;
+        }
     }
 }

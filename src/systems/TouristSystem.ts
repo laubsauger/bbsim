@@ -42,7 +42,10 @@ export class TouristSystem {
         this.vehicles = [];
     }
 
-    update(timeSeconds: number, delta: number) {
+    private currentHour: number = 12;
+
+    update(timeSeconds: number, delta: number, hour: number) {
+        this.currentHour = hour;
         if (this.tourists.length < this.targetCount && timeSeconds >= this.nextArrivalTime) {
             this.spawnTourist(timeSeconds);
             this.nextArrivalTime = timeSeconds + (5 + Math.random() * 10) * 60;
@@ -91,11 +94,13 @@ export class TouristSystem {
         tourist.isInCar = true;
         car.setDriver(tourist);
 
-        const parkingTarget = lodgingLot ? this.getParkingTarget(lodgingLot) : this.getCurbsideParkingForAttraction();
+        const parkingLot = lodgingLot || null;
+        const parkingTarget = parkingLot ? this.getParkingTarget(parkingLot, car.id) : this.getCurbsideParkingForAttraction();
         tourist.data.parkingSpot = { x: parkingTarget.x, y: parkingTarget.z };
+        (tourist as any).parkingLot = parkingLot; // Store reference to release spot later
 
         // Use pathfinding to get road-based path to parking target
-        const carPath = this.pathSystem.getPathTo(pos, parkingTarget);
+        const carPath = this.pathSystem.getVehiclePathTo(pos, parkingTarget, this.lots, car);
         if (carPath.length > 0) {
             car.path = carPath;
         } else {
@@ -168,7 +173,7 @@ export class TouristSystem {
                     const exitPoint = this.getHighwayExitPoint();
                     const exitTarget = new THREE.Vector3(exitPoint.x, 1, exitPoint.y);
                     // Use pathfinding to exit via roads
-                    const exitPath = this.pathSystem.getPathTo(car.position, exitTarget);
+                    const exitPath = this.pathSystem.getVehiclePathTo(car.position, exitTarget, this.lots, car);
                     if (exitPath.length > 0) {
                         car.path = exitPath;
                     } else {
@@ -180,6 +185,11 @@ export class TouristSystem {
 
         if (tourist.state === TouristState.LEAVING) {
             if (car && !car.target && (!car.path || car.path.length === 0)) {
+                // Release parking spot before exiting
+                const parkingLot = (tourist as any).parkingLot as Lot | null;
+                if (parkingLot && car) {
+                    this.releaseParkingSpot(parkingLot, car.id);
+                }
                 tourist.state = TouristState.EXITED;
                 this.onRemoveAgent?.(tourist);
                 this.onRemoveAgent?.(car);
@@ -194,7 +204,10 @@ export class TouristSystem {
     }
 
     private getAttractionTarget(): THREE.Vector3 {
-        const candidates = this.lots.filter(lot => lot.usage === LotUsage.PUBLIC || lot.usage === LotUsage.COMMERCIAL);
+        const isOpen = this.currentHour >= 9 && this.currentHour < 20;
+        const candidates = this.lots.filter(lot =>
+            lot.usage === LotUsage.PUBLIC || (lot.usage === LotUsage.COMMERCIAL && isOpen)
+        );
         if (candidates.length === 0) {
             return this.pathSystem.getRandomPointOnSidewalk();
         }
@@ -203,12 +216,32 @@ export class TouristSystem {
         return new THREE.Vector3(point.x, 2, point.y);
     }
 
-    private getParkingTarget(lot: Lot): THREE.Vector3 {
+    private getParkingTarget(lot: Lot, vehicleId: string): THREE.Vector3 {
+        // Try to reserve a parking spot
+        if (lot.parkingSpots && lot.parkingSpots.length > 0) {
+            const availableSpot = lot.parkingSpots.find(s => s.occupiedBy === null);
+            if (availableSpot) {
+                availableSpot.occupiedBy = vehicleId;
+                return new THREE.Vector3(availableSpot.x, 1, availableSpot.y);
+            }
+        }
+
+        // Fallback to legacy single spot
         if (lot.parkingSpot) return new THREE.Vector3(lot.parkingSpot.x, 1, lot.parkingSpot.y);
         if (lot.entryPoint) return new THREE.Vector3(lot.entryPoint.x, 1, lot.entryPoint.y);
+
+        // Last resort: lot center
         const x = lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length;
         const y = lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length;
         return new THREE.Vector3(x, 1, y);
+    }
+
+    private releaseParkingSpot(lot: Lot, vehicleId: string): void {
+        if (!lot.parkingSpots) return;
+        const spot = lot.parkingSpots.find(s => s.occupiedBy === vehicleId);
+        if (spot) {
+            spot.occupiedBy = null;
+        }
     }
 
     private getCurbsideParkingForAttraction(): THREE.Vector3 {
@@ -246,19 +279,20 @@ export class TouristSystem {
     }
 
     private getHighwayEntryPoint(): { x: number; y: number } {
-        // Tourists enter from northwest corner (1st St / Ave A intersection)
-        // In SVG coords: low X = west, low Y = north
+        const useNorth = Math.random() < 0.5;
+        if (useNorth) {
+            return {
+                x: this.bounds.minX + Math.random() * (this.bounds.maxX - this.bounds.minX),
+                y: this.bounds.minY,
+            };
+        }
         return {
-            x: this.bounds.minX + 50, // Slightly inside the boundary
-            y: this.bounds.minY + 50,
+            x: this.bounds.maxX,
+            y: this.bounds.minY + Math.random() * (this.bounds.maxY - this.bounds.minY),
         };
     }
 
     private getHighwayExitPoint(): { x: number; y: number } {
-        // Tourists exit via the same northwest corner
-        return {
-            x: this.bounds.minX + 50,
-            y: this.bounds.minY + 50,
-        };
+        return this.getHighwayEntryPoint();
     }
 }

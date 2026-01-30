@@ -1,7 +1,8 @@
-export type OverlayType = 'status' | 'addresses' | 'prices' | 'noise' | 'pollution' | 'traffic';
+export type OverlayType = 'status' | 'zoning' | 'addresses' | 'prices' | 'noise' | 'pollution' | 'traffic';
 
 export interface OverlayState {
     status: boolean;
+    zoning: boolean;
     addresses: boolean;
     prices: boolean;
     noise: boolean;
@@ -15,6 +16,7 @@ export interface OverlayMenuConfig {
 
 const OVERLAY_CONFIG: Record<OverlayType, { label: string; icon: string; description: string }> = {
     status: { label: 'Status', icon: '🏠', description: 'Lot occupation status' },
+    zoning: { label: 'Zoning', icon: '🏗️', description: 'Land use zoning' },
     addresses: { label: 'Streets', icon: '🗺️', description: 'Street names and addresses' },
     prices: { label: 'Prices', icon: '💰', description: 'Property values' },
     noise: { label: 'Noise', icon: '🔊', description: 'Noise pollution levels' },
@@ -32,6 +34,7 @@ export class OverlayMenu {
         this.onChange = config.onChange;
         this.state = {
             status: false,  // Default off for clean view
+            zoning: true,
             addresses: false,
             prices: false,
             noise: false,

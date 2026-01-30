@@ -27,6 +27,21 @@ export class PedestrianGraph {
         console.log(`[PedestrianGraph] Built graph with ${this.nodes.size} nodes`);
     }
 
+    getBounds(): { minX: number; maxX: number; minY: number; maxY: number } | null {
+        if (this.nodes.size === 0) return null;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (const node of this.nodes.values()) {
+            if (node.x < minX) minX = node.x;
+            if (node.x > maxX) maxX = node.x;
+            if (node.y < minY) minY = node.y;
+            if (node.y > maxY) maxY = node.y;
+        }
+        return { minX, maxX, minY, maxY };
+    }
+
     private buildGraph(roads: RoadSegment[]) {
         const nodeSpacing = 50;
         const sidewalkLines: SidewalkLine[] = [];
@@ -323,5 +338,51 @@ export class PedestrianGraph {
 
     private dist(n1: GraphNode, n2: GraphNode): number {
         return Math.sqrt((n1.x - n2.x) ** 2 + (n1.y - n2.y) ** 2);
+    }
+
+    createDebugVisualization(): THREE.Group {
+        if (this.debugGroup) {
+            return this.debugGroup;
+        }
+
+        this.debugGroup = new THREE.Group();
+        this.debugGroup.name = 'PedestrianGraphDebug';
+
+        const nodeMaterial = new THREE.MeshBasicMaterial({ color: 0x55d6ff });
+        const nodeGeometry = new THREE.SphereGeometry(4, 8, 8);
+        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x7fffd4 });
+        const drawnEdges = new Set<string>();
+
+        for (const node of this.nodes.values()) {
+            const sphere = new THREE.Mesh(nodeGeometry, nodeMaterial);
+            sphere.position.set(node.x, 8, -node.y);
+            this.debugGroup.add(sphere);
+
+            for (const connId of node.connections) {
+                const edgeKey = [node.id, connId].sort().join('|');
+                if (drawnEdges.has(edgeKey)) continue;
+                drawnEdges.add(edgeKey);
+
+                const conn = this.nodes.get(connId);
+                if (!conn) continue;
+                const points = [
+                    new THREE.Vector3(node.x, 8, -node.y),
+                    new THREE.Vector3(conn.x, 8, -conn.y)
+                ];
+                const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(lineGeo, edgeMaterial);
+                this.debugGroup.add(line);
+            }
+        }
+
+        console.log(`[PedestrianGraph Debug] Created visualization: ${this.nodes.size} nodes, ${drawnEdges.size} edges`);
+        return this.debugGroup;
+    }
+
+    removeDebugVisualization() {
+        if (this.debugGroup && this.debugGroup.parent) {
+            this.debugGroup.parent.remove(this.debugGroup);
+        }
+        this.debugGroup = null;
     }
 }

@@ -24,10 +24,19 @@ export class World {
 
             // State distribution
             const stateRand = Math.random();
-            if (stateRand < 0.4) state = LotState.ABANDONED;
-            else if (stateRand < 0.7) state = LotState.OCCUPIED;
-            else if (stateRand < 0.9) state = LotState.AWAY;
-            else state = LotState.FOR_SALE;
+
+            // Special rules for businesses
+            if (usage === LotUsage.LODGING || usage === LotUsage.COMMERCIAL) {
+                state = LotState.OCCUPIED;
+            } else if (stateRand < 0.4) {
+                state = LotState.ABANDONED;
+            } else if (stateRand < 0.7) {
+                state = LotState.OCCUPIED;
+            } else if (stateRand < 0.9) {
+                state = LotState.AWAY;
+            } else {
+                state = LotState.FOR_SALE;
+            }
 
             return {
                 ...raw,

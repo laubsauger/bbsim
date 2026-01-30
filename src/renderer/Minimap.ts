@@ -315,11 +315,11 @@ export class Minimap {
 
         // Draw agents
         agents.forEach(agent => {
-            // Convert from 3D local coords to minimap
-            // Agent position is in local coords (SVG space): SVG (x, y) → 3D (x, height, y)
-            // So: SVG.x = position.x, SVG.y = position.z
-            const svgX = agent.position.x;
-            const svgY = agent.position.z;
+        // Convert from 3D local coords to minimap
+        // Agent position is in local coords (SVG space): SVG (x, y) → 3D (x, height, y)
+        // So: SVG.x = position.x, SVG.y = position.z
+        const svgX = agent.position.x;
+        const svgY = agent.position.z;
 
             const sx = this.worldToScreenX(svgX);
             const sy = this.worldToScreenY(svgY);

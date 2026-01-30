@@ -17,6 +17,21 @@ export class RoadGraph {
         console.log(`[RoadGraph] Built graph with ${this.nodes.size} nodes`);
     }
 
+    getBounds(): { minX: number; maxX: number; minY: number; maxY: number } | null {
+        if (this.nodes.size === 0) return null;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (const node of this.nodes.values()) {
+            if (node.x < minX) minX = node.x;
+            if (node.x > maxX) maxX = node.x;
+            if (node.y < minY) minY = node.y;
+            if (node.y > maxY) maxY = node.y;
+        }
+        return { minX, maxX, minY, maxY };
+    }
+
     private buildGraph(roads: RoadSegment[]) {
         const nodeSpacing = 50; // Add nodes every 50 units along roads
 
@@ -281,7 +296,7 @@ export class RoadGraph {
         for (const node of this.nodes.values()) {
             // Node sphere - convert SVG coords to 3D: (x, height, y)
             const sphere = new THREE.Mesh(nodeGeometry, nodeMaterial);
-            sphere.position.set(node.x, 10, node.y);
+            sphere.position.set(node.x, 10, -node.y);
             this.debugGroup.add(sphere);
 
             // Edges
@@ -294,8 +309,8 @@ export class RoadGraph {
                 if (!conn) continue;
 
                 const points = [
-                    new THREE.Vector3(node.x, 10, node.y),
-                    new THREE.Vector3(conn.x, 10, conn.y)
+                    new THREE.Vector3(node.x, 10, -node.y),
+                    new THREE.Vector3(conn.x, 10, -conn.y)
                 ];
                 const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
                 const line = new THREE.Line(lineGeo, edgeMaterial);

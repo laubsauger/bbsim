@@ -283,14 +283,14 @@ export class SelectionHighlighter {
         if (lot.points.length === 0) return new THREE.Vector3();
         const centerX = lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length;
         const centerY = lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length;
-        return new THREE.Vector3(centerX, 2, -centerY);
+        return new THREE.Vector3(centerX, 2, centerY);
     }
 
     private getLotRadius(lot: Lot, center: THREE.Vector3): number {
         let max = 0;
         lot.points.forEach(point => {
             const dx = point.x - center.x;
-            const dz = -point.y - center.z;
+            const dz = point.y - center.z;
             const dist = Math.sqrt(dx * dx + dz * dz);
             if (dist > max) max = dist;
         });

@@ -145,6 +145,55 @@ async function init() {
 
     const worldRenderer = new WorldRenderer(scene);
     const selectionHighlighter = new SelectionHighlighter(worldRenderer.group);
+    const spawnDebugGroup = new THREE.Group();
+    spawnDebugGroup.name = 'SpawnDebug';
+    worldRenderer.group.add(spawnDebugGroup);
+
+    const formatBounds = (bounds: { minX: number; maxX: number; minY: number; maxY: number } | null) => {
+        if (!bounds) return 'null';
+        return `x:[${bounds.minX.toFixed(1)}, ${bounds.maxX.toFixed(1)}] y:[${bounds.minY.toFixed(1)}, ${bounds.maxY.toFixed(1)}]`;
+    };
+
+    const computeAgentBounds = (items: { position: THREE.Vector3 }[]) => {
+        if (items.length === 0) return null;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minZ = Infinity;
+        let maxZ = -Infinity;
+        items.forEach(item => {
+            const p = item.position;
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.z < minZ) minZ = p.z;
+            if (p.z > maxZ) maxZ = p.z;
+        });
+        return { minX, maxX, minZ, maxZ };
+    };
+
+    const logDiagnostics = (label: string, data: {
+        worldBounds?: { minX: number; maxX: number; minY: number; maxY: number };
+        groupPos?: THREE.Vector3;
+        roadBounds?: { minX: number; maxX: number; minY: number; maxY: number } | null;
+        pedBounds?: { minX: number; maxX: number; minY: number; maxY: number } | null;
+        agentBounds?: { minX: number; maxX: number; minZ: number; maxZ: number } | null;
+    }) => {
+        console.warn(`[Diagnostics] ${label}`);
+        if (data.worldBounds) {
+            console.warn(`  world(svg): ${formatBounds(data.worldBounds)}`);
+        }
+        if (data.groupPos) {
+            console.warn(`  world group position: x=${data.groupPos.x.toFixed(1)} y=${data.groupPos.y.toFixed(1)} z=${data.groupPos.z.toFixed(1)}`);
+        }
+        if (data.roadBounds) {
+            console.warn(`  road graph(svg): ${formatBounds(data.roadBounds)}`);
+        }
+        if (data.pedBounds) {
+            console.warn(`  ped graph(svg): ${formatBounds(data.pedBounds)}`);
+        }
+        if (data.agentBounds) {
+            console.warn(`  agents(world): x:[${data.agentBounds.minX.toFixed(1)}, ${data.agentBounds.maxX.toFixed(1)}] z:[${data.agentBounds.minZ.toFixed(1)}, ${data.agentBounds.maxZ.toFixed(1)}]`);
+        }
+    };
 
     // Minimap
     const minimap = new Minimap(controls, camera);
@@ -164,22 +213,34 @@ async function init() {
         box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     `;
     legend.innerHTML = `
-        <div style="margin-bottom: 8px;">
-            <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 4px;">Lots</div>
-            <div style="display: flex; gap: 10px; flex-wrap: nowrap;">
+        <div style="margin-bottom: 6px;">
+            <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 3px;">Status</div>
+            <div style="display: flex; gap: 8px; flex-wrap: nowrap;">
                 <span><span style="color: #5A8A6A">■</span> Occupied</span>
                 <span><span style="color: #8A6A6A">■</span> Abandoned</span>
                 <span><span style="color: #5A6A8A">■</span> ForSale</span>
                 <span><span style="color: #6A6A6A">■</span> Empty</span>
             </div>
         </div>
-        <div>
-            <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 4px;">People & Cars</div>
+        <div style="margin-bottom: 6px;">
+            <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 3px;">Zoning</div>
             <div style="display: flex; gap: 8px; flex-wrap: nowrap;">
+                <span><span style="color: #4A7A4A">■</span> Residential</span>
+                <span><span style="color: #7A5A3A">■</span> Commercial</span>
+                <span><span style="color: #5A5A7A">■</span> Public</span>
+                <span><span style="color: #6A4A6A">■</span> Lodging</span>
+                <span><span style="color: #5A5A5A">■</span> Vacant</span>
+            </div>
+        </div>
+        <div>
+            <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 3px;">Entities</div>
+            <div style="display: flex; gap: 6px; flex-wrap: nowrap;">
                 <span><span style="color: #22CC66">●</span> Resident</span>
                 <span><span style="color: #FFAA33">●</span> Tourist</span>
-                <span><span style="color: #CC3333">■</span> Local Car</span>
-                <span><span style="color: #4ECDC4">■</span> Tourist Car</span>
+                <span><span style="color: #CD853F">●</span> Dog</span>
+                <span><span style="color: #E8E8E8">●</span> Cat</span>
+                <span><span style="color: #CC3333">■</span> Car</span>
+                <span><span style="color: #4ECDC4">■</span> Rental</span>
             </div>
         </div>
     `;
@@ -267,6 +328,43 @@ async function init() {
         metalness: 0.0,
     });
 
+    // Zoning overlay colors (used as subtle emissive tint)
+    const zoningColors: Record<string, number> = {
+        residential: 0x4A7A4A,
+        commercial: 0x7A5A3A,
+        public: 0x5A5A7A,
+        lodging: 0x6A4A6A,
+        vacant: 0x5A5A5A,
+    };
+
+    const applyLotMaterials = () => {
+        worldRenderer.group.children.forEach(child => {
+            if (!(child instanceof THREE.Mesh) || child.userData?.type !== 'lot') return;
+            const lot = child.userData.data;
+            const baseMaterial = overlayMenu.state.status
+                ? worldRenderer.getLotMaterialPublic(lot)
+                : neutralLotMaterial;
+
+            if (child.userData?.customMaterial) {
+                child.material.dispose();
+                child.userData.customMaterial = false;
+            }
+
+            if (overlayMenu.state.zoning) {
+                const usage = lot.usage || 'vacant';
+                const tint = zoningColors[usage] || zoningColors.vacant;
+                const mat = baseMaterial.clone();
+                mat.color = baseMaterial.color.clone().lerp(new THREE.Color(tint), 0.15);
+                mat.emissive = new THREE.Color(tint);
+                mat.emissiveIntensity = 0.28;
+                child.material = mat;
+                child.userData.customMaterial = true;
+            } else {
+                child.material = baseMaterial;
+            }
+        });
+    };
+
     const state = {
         paused: false,
         timeSpeed: 60
@@ -278,19 +376,7 @@ async function init() {
             console.log(`Overlay ${overlay}: ${enabled ? 'ON' : 'OFF'}`);
             // Status overlay controls lot coloring (colored vs grey)
             if (overlay === 'status') {
-                worldRenderer.group.children.forEach(child => {
-                    // Check if this is a lot mesh (has userData.type === 'lot')
-                    if (child instanceof THREE.Mesh && child.userData?.type === 'lot') {
-                        if (enabled) {
-                            // Restore original material based on lot state
-                            const lot = child.userData.data;
-                            child.material = worldRenderer.getLotMaterialPublic(lot);
-                        } else {
-                            // Use neutral grey
-                            child.material = neutralLotMaterial;
-                        }
-                    }
-                });
+                applyLotMaterials();
                 // Toggle minimap mode: overlay when enabled, grid when disabled
                 minimap.setMode(enabled ? 'overlay' : 'grid');
             }
@@ -303,6 +389,10 @@ async function init() {
                 } else if (addressSystem) {
                     addressSystem.removeStreetLabels();
                 }
+            }
+            // Zoning overlay colors lots by usage type
+            if (overlay === 'zoning') {
+                applyLotMaterials();
             }
         }
     });
@@ -362,16 +452,29 @@ async function init() {
 
     // Debug folder
     const debugFolder = gui.addFolder('Debug');
-    const debugConfig = { showRoadGraph: false };
+    const debugConfig = { showRoadGraph: false, showPedGraph: false, showSpawnPoints: false };
     debugFolder.add(debugConfig, 'showRoadGraph').name('Show Road Graph').onChange((show: boolean) => {
         if (show && pathSystem) {
             const debugVis = pathSystem.getDebugVisualization();
-            worldRenderer.group.add(debugVis);  // Add to group for proper centering
+            worldRenderer.group.add(debugVis);
             console.log('[Debug] Road graph visualization enabled');
         } else if (pathSystem) {
             pathSystem.removeDebugVisualization();
             console.log('[Debug] Road graph visualization disabled');
         }
+    });
+    debugFolder.add(debugConfig, 'showPedGraph').name('Show Ped Graph').onChange((show: boolean) => {
+        if (show && pathSystem) {
+            const debugVis = pathSystem.getPedestrianDebugVisualization();
+            worldRenderer.group.add(debugVis);
+            console.log('[Debug] Pedestrian graph visualization enabled');
+        } else if (pathSystem) {
+            pathSystem.removePedestrianDebugVisualization();
+            console.log('[Debug] Pedestrian graph visualization disabled');
+        }
+    });
+    debugFolder.add(debugConfig, 'showSpawnPoints').name('Show Spawn Points').onChange((show: boolean) => {
+        spawnDebugGroup.visible = show;
     });
 
     // --- 4. Logic ---
@@ -398,6 +501,7 @@ async function init() {
         pop.residents.forEach(r => {
             agents.push(r);
             worldRenderer.group.add(r.mesh);
+            addSpawnMarker(r.position, 0x22CC66);
         });
 
         // Add vehicles to scene
@@ -409,6 +513,14 @@ async function init() {
             }
             agents.push(v);
             worldRenderer.group.add(v.carGroup);
+            addSpawnMarker(v.position, v.isTouristCar ? 0x4ECDC4 : 0xCC3333);
+        });
+
+        // Add pets (dogs/cats)
+        pop.pets.forEach(pet => {
+            agents.push(pet);
+            worldRenderer.group.add(pet.mesh);
+            addSpawnMarker(pet.position, pet.type === AgentType.DOG ? 0xCD853F : 0xE8E8E8);
         });
 
         entityExplorer.setData({
@@ -424,6 +536,9 @@ async function init() {
             touristSystem.clear();
             touristSystem.setTargetCount(simConfig.touristCount);
         }
+
+        const agentBounds = computeAgentBounds(agents);
+        logDiagnostics('Post-spawn bounds', { agentBounds });
     }
 
     try {
@@ -441,16 +556,18 @@ async function init() {
             maxZ: world.bounds.maxY + worldRenderer.group.position.z,
         };
 
-        // Apply initial clean state (no overlays active)
-        worldRenderer.group.children.forEach(child => {
-            if (child instanceof THREE.Mesh && child.userData?.type === 'lot') {
-                child.material = neutralLotMaterial;
-            }
-        });
+        // Apply initial clean state (respect overlays)
+        applyLotMaterials();
         minimap.setMode('grid');
 
         pathSystem = new PathfindingSystem(world.roads);
         pathSystem.computeAccessPoints(world.lots);
+        logDiagnostics('World + graphs', {
+            worldBounds: world.bounds,
+            groupPos: worldRenderer.group.position,
+            roadBounds: pathSystem.graph.getBounds(),
+            pedBounds: pathSystem.pedestrianGraph.getBounds(),
+        });
 
         // Initialize address system
         addressSystem = new AddressSystem(world.roads);
@@ -468,8 +585,11 @@ async function init() {
                 agents.push(agent as any);
                 if (agent instanceof Vehicle) {
                     worldRenderer.group.add(agent.carGroup);
+                    addSpawnMarker(agent.position, agent.isTouristCar ? 0x4ECDC4 : 0xCC3333);
                 } else {
                     worldRenderer.group.add((agent as any).mesh);
+                    const color = (agent as any).type === AgentType.TOURIST ? 0xFFAA33 : 0x22CC66;
+                    addSpawnMarker((agent as any).position, color);
                 }
             },
             onRemoveAgent: (agent) => {
@@ -524,10 +644,13 @@ async function init() {
                 agents.forEach(a => a.update(delta * timeScale));
 
                 if (touristSystem) {
-                    touristSystem.update(timeSystem.time.totalSeconds, delta * timeScale);
+                    touristSystem.update(timeSystem.time.totalSeconds, delta * timeScale, timeSystem.time.hour);
                 }
                 if (residentScheduleSystem) {
                     residentScheduleSystem.update(timeSystem.time.totalSeconds, timeSystem.time.hour, populationSystem.residents);
+                }
+                if (pathSystem) {
+                    pathSystem.setCurrentHour(timeSystem.time.hour);
                 }
             }
         }
@@ -596,6 +719,16 @@ async function init() {
     // Use setAnimationLoop for WebGPU/XR
     renderer.setAnimationLoop(animate);
 
+    function addSpawnMarker(position: THREE.Vector3, color: number) {
+        const geometry = new THREE.SphereGeometry(6, 10, 10);
+        const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(position);
+        mesh.position.y = 6;
+        spawnDebugGroup.add(mesh);
+        spawnDebugGroup.visible = debugConfig.showSpawnPoints;
+    }
+
     function getShoulderPose(target: THREE.Object3D): { pos: THREE.Vector3; target: THREE.Vector3 } {
         const targetPos = new THREE.Vector3();
         target.getWorldPosition(targetPos);
@@ -658,7 +791,7 @@ async function init() {
             const lot = entity.data;
             const centerX = lot.points.reduce((s: number, p: any) => s + p.x, 0) / lot.points.length;
             const centerY = lot.points.reduce((s: number, p: any) => s + p.y, 0) / lot.points.length;
-            return new THREE.Vector3(centerX, 2, -centerY).add(worldRenderer.group.position);
+            return new THREE.Vector3(centerX, 2, centerY).add(worldRenderer.group.position);
         }
         if (entity.type === 'vehicle') {
             const pos = new THREE.Vector3();
@@ -678,7 +811,7 @@ async function init() {
             const lot = entity.data;
             const radius = lot.points.reduce((max: number, point: any) => {
                 const dx = point.x - (targetPos.x - worldRenderer.group.position.x);
-                const dz = -point.y - (targetPos.z - worldRenderer.group.position.z);
+                const dz = point.y - (targetPos.z - worldRenderer.group.position.z);
                 const dist = Math.sqrt(dx * dx + dz * dz);
                 return Math.max(max, dist);
             }, 0);

@@ -100,16 +100,16 @@ export class ResidentScheduleSystem {
                 resident.enterCar();
                 resident.behaviorState = ResidentState.DRIVING;
                 const exitPoint = this.getHighwayExitPoint();
-                resident.data.car.target = new THREE.Vector3(exitPoint.x, 1, exitPoint.y);
+                resident.data.car.target = new THREE.Vector3(exitPoint.x, 1, -exitPoint.y);
                 schedule.leavingTown = true;
             } else {
-                const dest = this.pickDestinationLot(resident);
+                const dest = this.pickDestinationLot(resident, hour);
                 schedule.destinationLot = dest;
                 if (resident.data.hasCar && resident.data.car) {
                     resident.enterCar();
                     resident.behaviorState = ResidentState.DRIVING;
                     const target = this.getParkingTarget(dest);
-                    resident.data.car.target = new THREE.Vector3(target.x, 1, target.y);
+                    resident.data.car.target = new THREE.Vector3(target.x, 1, -target.y);
                 } else {
                     const point = this.getRandomPointInLot(dest);
                     resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
@@ -118,7 +118,7 @@ export class ResidentScheduleSystem {
             }
         } else if (slot === 'evening') {
             const visitFriend = Math.random() < 0.4;
-            const dest = visitFriend ? this.pickFriendLot(resident) : this.pickDestinationLot(resident);
+            const dest = visitFriend ? this.pickFriendLot(resident) : this.pickDestinationLot(resident, hour);
             schedule.destinationLot = dest;
             if (visitFriend) {
                 resident.allowedLots = [dest.id];
@@ -127,7 +127,7 @@ export class ResidentScheduleSystem {
                 resident.enterCar();
                 resident.behaviorState = ResidentState.DRIVING;
                 const target = this.getParkingTarget(dest);
-                resident.data.car.target = new THREE.Vector3(target.x, 1, target.y);
+                resident.data.car.target = new THREE.Vector3(target.x, 1, -target.y);
             } else {
                 const point = this.getRandomPointInLot(dest);
                 resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
@@ -146,8 +146,11 @@ export class ResidentScheduleSystem {
         return 'evening';
     }
 
-    private pickDestinationLot(resident: Resident): Lot {
-        const candidates = this.lots.filter(lot => lot.usage === LotUsage.COMMERCIAL || lot.usage === LotUsage.PUBLIC);
+    private pickDestinationLot(resident: Resident, hour: number): Lot {
+        const isOpen = hour >= 9 && hour < 20;
+        const candidates = this.lots.filter(lot =>
+            lot.usage === LotUsage.PUBLIC || (lot.usage === LotUsage.COMMERCIAL && isOpen)
+        );
         if (candidates.length === 0) return resident.data.homeLot;
         return candidates[Math.floor(Math.random() * candidates.length)];
     }
@@ -188,12 +191,12 @@ export class ResidentScheduleSystem {
     private returnFromTown(resident: Resident) {
         const entry = this.getHighwayEntryPoint();
         if (resident.data.car) {
-            resident.data.car.position.set(entry.x, 1, entry.y);
+            resident.data.car.position.set(entry.x, 1, -entry.y);
             resident.data.car.updateMesh();
             resident.data.car.carGroup.visible = true;
             resident.data.car.setDriver(null);
         }
-        resident.position.set(entry.x, 1, entry.y);
+        resident.position.set(entry.x, 1, -entry.y);
         resident.mesh.visible = true;
         resident.isInCar = false;
         resident.behaviorState = ResidentState.WALKING_HOME;
