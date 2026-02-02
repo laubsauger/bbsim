@@ -17,6 +17,7 @@ export class Vehicle extends Agent {
     carGroup: THREE.Group;
     driverSeat: THREE.Mesh | null = null;
     passengerSeats: THREE.Mesh[] = [];
+    speedModifier: number = 1;
 
     constructor(config: AgentConfig, isTourist: boolean = false) {
         super({ ...config, speed: config.speed * 2 }); // Cars are faster
@@ -164,8 +165,9 @@ export class Vehicle extends Agent {
                 // Calculate target rotation based on movement direction
                 this.targetRotation = Math.atan2(direction.x, direction.z);
 
-                // Accelerate toward target speed
-                this.currentSpeed = Math.min(this.speed, this.currentSpeed + this.speed * 2 * delta);
+                // Accelerate toward target speed (with dynamic modifier)
+                const desiredSpeed = this.speed * Math.max(0, Math.min(1, this.speedModifier));
+                this.currentSpeed = Math.min(desiredSpeed, this.currentSpeed + this.speed * 2 * delta);
 
                 // Move forward without overshooting the target
                 direction.normalize();
@@ -179,6 +181,9 @@ export class Vehicle extends Agent {
 
         // Always update mesh (including smooth rotation)
         this.updateMesh(delta);
+
+        // Reset per-frame modifier (PathfindingSystem will reapply)
+        this.speedModifier = 1;
     }
 
     updateMesh(delta?: number) {

@@ -3,6 +3,7 @@ import { Lot, LotState, AgentType, LotUsage } from '../types';
 import { Resident } from '../entities/Resident';
 import { Vehicle } from '../entities/Vehicle';
 import { Agent } from '../entities/Agent';
+import { PathfindingSystem } from './PathfindingSystem';
 
 export interface PopulationConfig {
     residentCount: number;
@@ -15,9 +16,11 @@ export class PopulationSystem {
     vehicles: Vehicle[] = [];
     pets: Agent[] = [];
     lots: Lot[];
+    private pathSystem: PathfindingSystem;
 
-    constructor(lots: Lot[]) {
+    constructor(lots: Lot[], pathSystem: PathfindingSystem) {
         this.lots = lots;
+        this.pathSystem = pathSystem;
     }
 
     populate(config: PopulationConfig): { residents: Resident[], tourists: Agent[], vehicles: Vehicle[], pets: Agent[] } {
@@ -103,8 +106,10 @@ export class PopulationSystem {
                 // Create car if resident has one AND there is a parking spot
                 if (resident.data.hasCar) {
                     const parkingSpot = this.reserveParkingSpot(lot, `car_${residentId}`);
-                    if (parkingSpot) {
-                        const carPos = new THREE.Vector3(parkingSpot.x, 1, parkingSpot.y);
+                    const streetSpot = !parkingSpot ? this.pathSystem.getStreetParkingSpot(lot, `car_${residentId}`) : null;
+                    const spawnSpot = parkingSpot || streetSpot;
+                    if (spawnSpot) {
+                        const carPos = new THREE.Vector3(spawnSpot.x, 1, spawnSpot.y);
 
                         const car = new Vehicle({
                             id: `car_${residentId}`,
@@ -113,12 +118,12 @@ export class PopulationSystem {
                             speed: 40 + Math.random() * 20,
                         }, false);
 
-                        car.targetRotation = parkingSpot.rotation;
+                        car.targetRotation = spawnSpot.rotation;
                         car.updateMesh();
                         resident.data.car = car;
                         this.vehicles.push(car);
                     } else {
-                        // Revoke car if no off-street parking available
+                        // Revoke car if no valid parking available
                         resident.data.hasCar = false;
                     }
                 }
@@ -238,6 +243,15 @@ export class PopulationSystem {
         }
 
         return null;
+    }
+
+    private getStreetParkingSpot(lot: Lot): { x: number; y: number; rotation: number } | null {
+        if (!lot.roadAccessPoint) return null;
+        return {
+            x: lot.roadAccessPoint.x,
+            y: lot.roadAccessPoint.y,
+            rotation: 0
+        };
     }
 
     /**

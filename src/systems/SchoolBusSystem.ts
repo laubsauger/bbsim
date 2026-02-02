@@ -145,11 +145,11 @@ export class SchoolBusSystem {
 
         const nextStop = this.bus.getNextStop();
         if (nextStop) {
-            const path = this.pathSystem.getPathTo(this.bus.position, nextStop);
+            const path = this.pathSystem.getVehiclePathTo(this.bus.position, nextStop, this.lots, this.bus);
             if (path.length > 0) {
                 this.bus.path = path;
             } else {
-                this.bus.target = nextStop.clone();
+                console.error(`[SchoolBus] No path to stop (${nextStop.x.toFixed(1)},${nextStop.z.toFixed(1)})`);
             }
             this.state = this.bus.isPickingUp ? SchoolBusState.PICKING_UP : SchoolBusState.DROPPING_OFF;
         } else {
@@ -163,12 +163,12 @@ export class SchoolBusSystem {
 
         const exit = this.getExitPoint();
         const exitTarget = new THREE.Vector3(exit.x, 1, exit.y);
-        const path = this.pathSystem.getPathTo(this.bus.position, exitTarget);
+        const path = this.pathSystem.getVehiclePathTo(this.bus.position, exitTarget, this.lots, this.bus);
 
         if (path.length > 0) {
             this.bus.path = path;
         } else {
-            this.bus.target = exitTarget;
+            console.error(`[SchoolBus] No path to exit (${exitTarget.x.toFixed(1)},${exitTarget.z.toFixed(1)})`);
         }
 
         this.state = SchoolBusState.LEAVING_TOWN;

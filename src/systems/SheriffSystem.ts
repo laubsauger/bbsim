@@ -138,12 +138,12 @@ export class SheriffSystem {
 
         if (this.currentPatrolIndex < this.patrolPoints.length) {
             const target = this.patrolPoints[this.currentPatrolIndex];
-            const path = this.pathSystem.getPathTo(this.sheriffCar.position, target);
+            const path = this.pathSystem.getVehiclePathTo(this.sheriffCar.position, target, this.lots, this.sheriffCar);
 
             if (path.length > 0) {
                 this.sheriffCar.path = path;
             } else {
-                this.sheriffCar.target = target.clone();
+                console.error(`[Sheriff] No path to patrol point (${target.x.toFixed(1)},${target.z.toFixed(1)})`);
             }
 
             this.state = SheriffState.PATROLLING;
@@ -158,12 +158,12 @@ export class SheriffSystem {
 
         const exit = this.getEntryPoint();
         const exitTarget = new THREE.Vector3(exit.x, 1, exit.y);
-        const path = this.pathSystem.getPathTo(this.sheriffCar.position, exitTarget);
+        const path = this.pathSystem.getVehiclePathTo(this.sheriffCar.position, exitTarget, this.lots, this.sheriffCar);
 
         if (path.length > 0) {
             this.sheriffCar.path = path;
         } else {
-            this.sheriffCar.target = exitTarget;
+            console.error(`[Sheriff] No path to exit (${exitTarget.x.toFixed(1)},${exitTarget.z.toFixed(1)})`);
         }
 
         this.state = SheriffState.LEAVING_TOWN;

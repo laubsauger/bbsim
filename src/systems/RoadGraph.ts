@@ -9,12 +9,13 @@ interface GraphNode {
 }
 
 export class RoadGraph {
+    private roads: RoadSegment[];
     nodes: Map<string, GraphNode> = new Map();
     debugGroup: THREE.Group | null = null;
 
     constructor(roads: RoadSegment[]) {
+        this.roads = roads;
         this.buildGraph(roads);
-        console.log(`[RoadGraph] Built simpler graph with ${this.nodes.size} nodes (Intersections only)`);
         this.verifyConnectivity();
     }
 
@@ -42,8 +43,6 @@ export class RoadGraph {
             console.error(`[RoadGraph] GRAPH DISCONNECTED! Reachable: ${visited.size}, Total: ${this.nodes.size}. Vehicles will fail to cross gaps.`);
             const unreached = Array.from(this.nodes.keys()).filter(id => !visited.has(id));
             console.warn(`[RoadGraph] First 5 unreachable nodes: ${unreached.slice(0, 5).join(', ')}`);
-        } else {
-            console.log(`[RoadGraph] Connectivity Verified: All ${this.nodes.size} nodes are fully connected.`);
         }
     }
 
@@ -98,17 +97,6 @@ export class RoadGraph {
         roads.forEach(road => {
             const pointsOnRoad: Point[] = [];
 
-            // Add Endpoints
-            if (road.type === 'vertical') {
-                const cx = road.x + road.width / 2;
-                pointsOnRoad.push({ x: cx, y: road.y });
-                pointsOnRoad.push({ x: cx, y: road.y + road.height });
-            } else {
-                const cy = road.y + road.height / 2;
-                pointsOnRoad.push({ x: road.x, y: cy });
-                pointsOnRoad.push({ x: road.x + road.width, y: cy });
-            }
-
             // Add Intersections that fall on this road
             intersectionPoints.forEach(p => {
                 if (road.type === 'vertical') {
@@ -154,9 +142,10 @@ export class RoadGraph {
         });
     }
 
+
     private getNodeId(p: Point): string {
-        // Use precision to ensure intersection matches
-        return `${Math.round(p.x)},${Math.round(p.y)}`;
+        // Use fixed precision to avoid accidental node collisions that create diagonal edges
+        return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
     }
 
     private addNode(p: Point) {
@@ -174,9 +163,73 @@ export class RoadGraph {
     private addEdge(id1: string, id2: string) {
         const n1 = this.nodes.get(id1);
         const n2 = this.nodes.get(id2);
+        if (!n1 || !n2) return;
+        if (!this.isValidRoadEdge(n1, n2)) return;
 
-        if (n1 && !n1.connections.includes(id2)) n1.connections.push(id2);
-        if (n2 && !n2.connections.includes(id1)) n2.connections.push(id1);
+        if (!n1.connections.includes(id2)) n1.connections.push(id2);
+        if (!n2.connections.includes(id1)) n2.connections.push(id1);
+    }
+
+    private isValidRoadEdge(n1: GraphNode, n2: GraphNode): boolean {
+        const tol = 0.75;
+        const dx = Math.abs(n1.x - n2.x);
+        const dy = Math.abs(n1.y - n2.y);
+
+        if (dx > tol && dy > tol) {
+            return false; // Diagonal edge
+        }
+
+        if (dx <= tol) {
+            const x = (n1.x + n2.x) * 0.5;
+            const yMin = Math.min(n1.y, n2.y);
+            const yMax = Math.max(n1.y, n2.y);
+            return this.roads.some(road => {
+                if (road.type !== 'vertical') return false;
+                const cx = road.x + road.width / 2;
+                if (Math.abs(x - cx) > tol) return false;
+                return yMin >= road.y - tol && yMax <= road.y + road.height + tol;
+            });
+        }
+
+        const y = (n1.y + n2.y) * 0.5;
+        const xMin = Math.min(n1.x, n2.x);
+        const xMax = Math.max(n1.x, n2.x);
+        return this.roads.some(road => {
+            if (road.type !== 'horizontal') return false;
+            const cy = road.y + road.height / 2;
+            if (Math.abs(y - cy) > tol) return false;
+            return xMin >= road.x - tol && xMax <= road.x + road.width + tol;
+        });
+    }
+
+    getClosestNodeOnRoad(point: Point, road: RoadSegment): GraphNode | null {
+        const tol = 1.5;
+        let closest: GraphNode | null = null;
+        let minDist = Infinity;
+
+        const isOnRoadLine = (node: GraphNode) => {
+            if (road.type === 'vertical') {
+                const cx = road.x + road.width / 2;
+                return Math.abs(node.x - cx) <= tol &&
+                    node.y >= road.y - tol && node.y <= road.y + road.height + tol;
+            }
+            const cy = road.y + road.height / 2;
+            return Math.abs(node.y - cy) <= tol &&
+                node.x >= road.x - tol && node.x <= road.x + road.width + tol;
+        };
+
+        for (const node of this.nodes.values()) {
+            if (!isOnRoadLine(node)) continue;
+            const dx = node.x - point.x;
+            const dy = node.y - point.y;
+            const dist = dx * dx + dy * dy;
+            if (dist < minDist) {
+                minDist = dist;
+                closest = node;
+            }
+        }
+
+        return closest;
     }
 
     // Identify the closest graph node to a given position

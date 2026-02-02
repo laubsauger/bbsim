@@ -626,7 +626,7 @@ async function init() {
         addressSystem.assignAddressesToLots(world.lots);
 
         // Initialize population system
-        populationSystem = new PopulationSystem(world.lots);
+        populationSystem = new PopulationSystem(world.lots, pathSystem);
         spawnPopulation();
 
         touristSystem = new TouristSystem({

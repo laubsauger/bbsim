@@ -23,6 +23,7 @@ export class Agent {
     target: THREE.Vector3 | null = null;
     speed: number;
     currentSpeed: number = 0; // Actual current speed (for acceleration)
+    speedModifier: number = 1; // Dynamic speed scaling (collision avoidance, etc.)
     mesh: THREE.Mesh;
     meshHeight: number; // Store height for Y offset calculation
     recentPath: THREE.Vector3[] = []; // Buffer for recent movement history
@@ -103,8 +104,9 @@ export class Agent {
 
                 this.mesh.rotation.y += rotationDiff * Math.min(1, this.rotationSpeed * delta);
 
+                const targetSpeed = this.speed * this.speedModifier;
                 // Accelerate toward target speed
-                this.currentSpeed = Math.min(this.speed, this.currentSpeed + this.speed * 2 * delta);
+                this.currentSpeed = Math.min(targetSpeed, this.currentSpeed + this.speed * 2 * delta * this.speedModifier);
 
                 // Move forward
                 direction.normalize();
@@ -115,6 +117,9 @@ export class Agent {
             // No target - decelerate
             this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 3 * delta);
         }
+
+        // Reset per-frame modifier (systems can reapply each tick)
+        this.speedModifier = 1;
     }
 
     updateMesh() {

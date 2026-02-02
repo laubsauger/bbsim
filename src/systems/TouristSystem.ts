@@ -95,8 +95,15 @@ export class TouristSystem {
         car.setDriver(tourist);
 
         const parkingLot = lodgingLot || null;
-        const parkingTarget = parkingLot ? this.getParkingTarget(parkingLot, car.id) : this.getCurbsideParkingForAttraction();
+        const parking = parkingLot ? this.getParkingTarget(parkingLot, car.id) : this.getCurbsideParkingForAttraction(car.id);
+        const parkingTarget = parking.point;
+        if (typeof parking.rotation === 'number') {
+            car.targetRotation = parking.rotation;
+        }
         tourist.data.parkingSpot = { x: parkingTarget.x, y: parkingTarget.z };
+        if (parking.streetId) {
+            (tourist as any).streetSpotId = parking.streetId;
+        }
         (tourist as any).parkingLot = parkingLot; // Store reference to release spot later
 
         // Use pathfinding to get road-based path to parking target
@@ -104,8 +111,7 @@ export class TouristSystem {
         if (carPath.length > 0) {
             car.path = carPath;
         } else {
-            // Fallback: direct target (shouldn't happen often)
-            car.target = parkingTarget.clone();
+            console.error(`[TouristSystem] No vehicle path for ${car.id} to parking target (${parkingTarget.x.toFixed(1)},${parkingTarget.z.toFixed(1)})`);
         }
 
         this.tourists.push(tourist);
@@ -177,7 +183,7 @@ export class TouristSystem {
                     if (exitPath.length > 0) {
                         car.path = exitPath;
                     } else {
-                        car.target = exitTarget;
+                        console.error(`[TouristSystem] No vehicle path for ${car.id} to exit (${exitTarget.x.toFixed(1)},${exitTarget.z.toFixed(1)})`);
                     }
                 }
             }
@@ -189,6 +195,10 @@ export class TouristSystem {
                 const parkingLot = (tourist as any).parkingLot as Lot | null;
                 if (parkingLot && car) {
                     this.releaseParkingSpot(parkingLot, car.id);
+                }
+                const streetSpotId = (tourist as any).streetSpotId as string | undefined;
+                if (streetSpotId && car) {
+                    this.pathSystem.releaseStreetParking(streetSpotId, car.id);
                 }
                 tourist.state = TouristState.EXITED;
                 this.onRemoveAgent?.(tourist);
@@ -232,24 +242,33 @@ export class TouristSystem {
         return new THREE.Vector3(point.x, 2, point.y);
     }
 
-    private getParkingTarget(lot: Lot, vehicleId: string): THREE.Vector3 {
+    private getParkingTarget(lot: Lot, vehicleId: string): { point: THREE.Vector3; rotation?: number; streetId?: string } {
         // Try to reserve a parking spot
         if (lot.parkingSpots && lot.parkingSpots.length > 0) {
             const availableSpot = lot.parkingSpots.find(s => s.occupiedBy === null);
             if (availableSpot) {
                 availableSpot.occupiedBy = vehicleId;
-                return new THREE.Vector3(availableSpot.x, 1, availableSpot.y);
+                return { point: new THREE.Vector3(availableSpot.x, 1, availableSpot.y), rotation: availableSpot.rotation };
             }
         }
 
         // Fallback to legacy single spot
-        if (lot.parkingSpot) return new THREE.Vector3(lot.parkingSpot.x, 1, lot.parkingSpot.y);
-        if (lot.entryPoint) return new THREE.Vector3(lot.entryPoint.x, 1, lot.entryPoint.y);
+        if (lot.parkingSpot) return { point: new THREE.Vector3(lot.parkingSpot.x, 1, lot.parkingSpot.y), rotation: lot.parkingRotation || 0 };
+        if (lot.entryPoint) return { point: new THREE.Vector3(lot.entryPoint.x, 1, lot.entryPoint.y) };
+
+        const streetSpot = this.pathSystem.getStreetParkingSpot(lot, vehicleId);
+        if (streetSpot) {
+            return {
+                point: new THREE.Vector3(streetSpot.x, 1, streetSpot.y),
+                rotation: streetSpot.rotation,
+                streetId: streetSpot.id
+            };
+        }
 
         // Last resort: lot center
         const x = lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length;
         const y = lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length;
-        return new THREE.Vector3(x, 1, y);
+        return { point: new THREE.Vector3(x, 1, y) };
     }
 
     private releaseParkingSpot(lot: Lot, vehicleId: string): void {
@@ -260,10 +279,18 @@ export class TouristSystem {
         }
     }
 
-    private getCurbsideParkingForAttraction(): THREE.Vector3 {
+    private getCurbsideParkingForAttraction(vehicleId: string): { point: THREE.Vector3; rotation?: number; streetId?: string } {
         const target = this.getAttractionTarget();
+        const spot = this.pathSystem.getStreetParkingSpotForPoint({ x: target.x, y: target.z }, vehicleId);
+        if (spot) {
+            return {
+                point: new THREE.Vector3(spot.x, 1, spot.y),
+                rotation: spot.rotation,
+                streetId: spot.id
+            };
+        }
         const nearest = this.pathSystem.getNearestRoadPoint(target.x, target.z);
-        return new THREE.Vector3(nearest.x, 1, nearest.y);
+        return { point: new THREE.Vector3(nearest.x, 1, nearest.y) };
     }
 
     private getRandomPointInLot(lot: Lot): { x: number; y: number } {
