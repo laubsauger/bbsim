@@ -422,10 +422,10 @@ export class WorldRenderer {
             const seed = building.id * 12.345;
             const r = Math.abs(Math.sin(seed));
 
-            // 95% single story (18-24 units), 5% double story (40-45 units)
-            // Mobile homes are often low
-            let buildingHeight = 18 + r * 6;
-            if (r > 0.95) buildingHeight = 40 + (r - 0.95) * 100;
+            // Most buildings are mobile homes/trailers - low with minimal variance
+            // ~98.5% single story (14-18 units), ~1.5% two-story (~10 buildings in town)
+            let buildingHeight = 14 + r * 4;
+            if (r > 0.985) buildingHeight = 32 + (r - 0.985) * 200;
 
             const geometry = new THREE.ExtrudeGeometry(shape, {
                 steps: 1,

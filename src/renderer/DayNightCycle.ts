@@ -44,8 +44,8 @@ export class DayNightCycle {
     private moonMesh: THREE.Mesh | null = null;
 
     // Street lamps (SpotLights for downward cone)
+    // Street lamps (SpotLights for downward cone)
     private streetLamps: THREE.SpotLight[] = [];
-    private lampMeshes: THREE.Mesh[] = [];
     private lampGroup: THREE.Group;
     private bulbMaterial: THREE.MeshStandardMaterial | null = null;
 
@@ -54,7 +54,7 @@ export class DayNightCycle {
 
     // Custom time override
     public useCustomTime: boolean = false;
-    public customHour: number = 12; // 0-24
+    public customHour: number = 18; // 0-24, default 6 PM
 
     constructor(
         scene: THREE.Scene,
@@ -68,19 +68,20 @@ export class DayNightCycle {
         this.hemiLight = hemiLight;
         this.fog = scene.fog as THREE.Fog;
 
-        // Create moon light (dimmer, blue-ish)
-        this.moonLight = new THREE.DirectionalLight(0x6688cc, 0.15);
+        // Create moon light (dimmer, blue-ish, desaturated)
+        this.moonLight = new THREE.DirectionalLight(0xaaccff, 0.4);
         this.moonLight.castShadow = true;
-        this.moonLight.shadow.mapSize.width = 4096;
-        this.moonLight.shadow.mapSize.height = 4096;
+        this.moonLight.shadow.mapSize.width = 8192;
+        this.moonLight.shadow.mapSize.height = 8192;
         this.moonLight.shadow.camera.near = 100;
-        this.moonLight.shadow.camera.far = 8000;
+        this.moonLight.shadow.camera.far = 20000;
         this.moonLight.shadow.camera.left = -3000;
         this.moonLight.shadow.camera.right = 3000;
         this.moonLight.shadow.camera.top = 3000;
         this.moonLight.shadow.camera.bottom = -3000;
         this.moonLight.shadow.bias = -0.0005;
         scene.add(this.moonLight);
+        scene.add(this.moonLight.target); // Target must be in scene for shadow direction
 
         // Create visible sun mesh (large and distant for proper sky effect)
         const sunGeo = new THREE.SphereGeometry(400, 32, 32);
@@ -123,7 +124,6 @@ export class DayNightCycle {
             this.lampGroup.remove(this.lampGroup.children[0]);
         }
         this.streetLamps = [];
-        this.lampMeshes = [];
 
         // Filter to every other intersection, place on corners
         const lampPositions: { x: number; y: number; corner: number }[] = [];
@@ -233,7 +233,8 @@ export class DayNightCycle {
             bulbInstanced.setMatrixAt(i, dummy.matrix);
 
             // Create spot light pointing down from fixture
-            const light = new THREE.SpotLight(sodiumColor, 0, 60, Math.PI / 3, 0.6, 1.5);
+            // High intensity, moderate decay for visible pool
+            const light = new THREE.SpotLight(sodiumColor, 0, 120, Math.PI / 3, 0.4, 1.2);
             light.position.set(fixX, fixtureHeight - 2, fixZ);
             light.target.position.set(fixX, 0, fixZ);
             light.castShadow = false;
@@ -293,6 +294,7 @@ export class DayNightCycle {
         this.moonLight.position.copy(moonPos).add(WORLD_CENTER);
         this.moonLight.target.position.copy(WORLD_CENTER);
         this.moonLight.target.updateMatrixWorld();
+        this.moonLight.shadow.camera.updateProjectionMatrix(); // Update moon shadow proj
 
         // Update visible meshes
         if (this.sunMesh) {
@@ -341,8 +343,8 @@ export class DayNightCycle {
         this.moonLight.intensity = moonIntensityFactor * (0.05 + moonBrightness * 0.25) * (0.3 + nightBoost * 0.7);
 
         // --- AMBIENT LIGHT ---
-        // Smoothly transition intensity and color
-        const ambientIntensity = 0.08 + dayFactor * 0.22;
+        // Smoothly transition intensity and color - Darker at night for better shadows
+        const ambientIntensity = 0.04 + dayFactor * 0.26;
         this.ambientLight.intensity = ambientIntensity;
 
         const ambientNight = new THREE.Color(0x222244);
@@ -398,18 +400,15 @@ export class DayNightCycle {
 
         // --- STREET LAMPS ---
         // Turn on at dusk/night, off during day
-        const lampIntensity = (1 - dayFactor) * 3.0; // 0 during day, 3.0 at night for good illumination
+        const lampIntensity = (1 - dayFactor) * 300.0; // High intensity for visible ground illumination
         this.streetLamps.forEach(lamp => {
             lamp.intensity = lampIntensity;
         });
-        // Update lamp head glow color based on on/off state
-        const lampHeadColor = lampIntensity > 0.1 ? 0xffa033 : 0x332211;
-        this.lampMeshes.forEach((mesh, i) => {
-            // Every other mesh is a lamp head (odd indices)
-            if (i % 2 === 1 && mesh.material instanceof THREE.MeshBasicMaterial) {
-                mesh.material.color.setHex(lampHeadColor);
-            }
-        });
+
+        // Efficiently update shared bulb material
+        if (this.bulbMaterial) {
+            this.bulbMaterial.emissiveIntensity = lampIntensity;
+        }
     }
 
     /**

@@ -76,12 +76,12 @@ export class Vehicle extends Agent {
         });
 
         const hlLeft = new THREE.Mesh(hlGeo, hlMat.clone());
-        hlLeft.position.set(-halfWidth + 1.5, bodyHeight / 2, halfLength);
+        hlLeft.position.set(-halfWidth + 1.5, bodyHeight / 2, -halfLength); // Front is -Z
         this.carGroup.add(hlLeft);
         this.headlights.push(hlLeft);
 
         const hlRight = new THREE.Mesh(hlGeo, hlMat.clone());
-        hlRight.position.set(halfWidth - 1.5, bodyHeight / 2, halfLength);
+        hlRight.position.set(halfWidth - 1.5, bodyHeight / 2, -halfLength); // Front is -Z
         this.carGroup.add(hlRight);
         this.headlights.push(hlRight);
 
@@ -94,12 +94,12 @@ export class Vehicle extends Agent {
         });
 
         const tlLeft = new THREE.Mesh(tlGeo, tlMat.clone());
-        tlLeft.position.set(-halfWidth + 1.5, bodyHeight / 2, -halfLength);
+        tlLeft.position.set(-halfWidth + 1.5, bodyHeight / 2, halfLength); // Rear is +Z
         this.carGroup.add(tlLeft);
         this.taillights.push(tlLeft);
 
         const tlRight = new THREE.Mesh(tlGeo, tlMat.clone());
-        tlRight.position.set(halfWidth - 1.5, bodyHeight / 2, -halfLength);
+        tlRight.position.set(halfWidth - 1.5, bodyHeight / 2, halfLength); // Rear is +Z
         this.carGroup.add(tlRight);
         this.taillights.push(tlRight);
 
@@ -107,10 +107,10 @@ export class Vehicle extends Agent {
 
         // Seat positions (2 front, 2 back) - visible from above as dark cutouts
         const seatPositions = [
-            { x: 1.5 * VEHICLE_SCALE, z: 2.5 * VEHICLE_SCALE },    // Driver (front right)
-            { x: -1.5 * VEHICLE_SCALE, z: 2.5 * VEHICLE_SCALE },   // Front passenger (front left)
-            { x: 1.5 * VEHICLE_SCALE, z: -2 * VEHICLE_SCALE },     // Back right
-            { x: -1.5 * VEHICLE_SCALE, z: -2 * VEHICLE_SCALE },    // Back left
+            { x: 1.5 * VEHICLE_SCALE, z: -2.5 * VEHICLE_SCALE },    // Driver (front right)
+            { x: -1.5 * VEHICLE_SCALE, z: -2.5 * VEHICLE_SCALE },   // Front passenger
+            { x: 1.5 * VEHICLE_SCALE, z: 2 * VEHICLE_SCALE },       // Back right
+            { x: -1.5 * VEHICLE_SCALE, z: 2 * VEHICLE_SCALE },      // Back left
         ];
 
         // Create seat cutouts (dark circles visible from above - empty seats)

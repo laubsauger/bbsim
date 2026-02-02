@@ -34,6 +34,12 @@ import { DayNightCycle } from './DayNightCycle';
 async function init() {
     // --- 1. Systems Setup ---
     const timeSystem = new TimeSystem();
+    // Sync to user's local time (simulationClock = users time on load)
+    const now = new Date();
+    timeSystem.time.hour = now.getHours();
+    timeSystem.time.minute = now.getMinutes();
+    timeSystem.time.totalSeconds = timeSystem.time.hour * 3600 + timeSystem.time.minute * 60;
+    console.log(`[TimeSystem] Synced to Local User Time: ${timeSystem.time.hour}:${timeSystem.time.minute}`);
     const world = new World();
     const agents: Agent[] = []; // Unified list
     let pathSystem: PathfindingSystem;
@@ -137,10 +143,11 @@ async function init() {
     sunLight.castShadow = true;
 
     // Shadow configuration - 4096 provides good quality with better performance
-    sunLight.shadow.mapSize.width = 4096;
-    sunLight.shadow.mapSize.height = 4096;
+    // Shadow configuration - 4096 provides good quality with better performance
+    sunLight.shadow.mapSize.width = 8192;
+    sunLight.shadow.mapSize.height = 8192;
     sunLight.shadow.camera.near = 100;
-    sunLight.shadow.camera.far = 8000;
+    sunLight.shadow.camera.far = 20000;
     sunLight.shadow.camera.left = -3000;
     sunLight.shadow.camera.right = 3000;
     sunLight.shadow.camera.top = 3000;
@@ -158,7 +165,7 @@ async function init() {
 
     // Day/Night Cycle System (optional, linked to game clock)
     const dayNightCycle = new DayNightCycle(scene, sunLight, ambientLight, hemiLight);
-    dayNightCycle.setEnabled(false); // Disabled by default
+    dayNightCycle.setEnabled(true); // Enabled by default
 
     const stats = new Stats();
     document.body.appendChild(stats.dom);
