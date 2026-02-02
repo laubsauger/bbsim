@@ -199,8 +199,9 @@ export class ResidentScheduleSystem {
                 });
             }
 
-            // Evening bar visit (based on drinking habit)
-            if (data.drinkingHabit > 0.2 && Math.random() < data.drinkingHabit) {
+            // Evening bar visit (based on drinking habit + sociability)
+            const barChance = Math.max(0.15, data.drinkingHabit * (0.6 + data.sociability * 0.4));
+            if (Math.random() < barChance) {
                 const barStart = 18 + Math.random() * 4; // 6pm-10pm
                 const barDuration = 1 + Math.random() * 2 * data.drinkingHabit;
                 plan.push({

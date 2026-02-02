@@ -85,10 +85,16 @@ export interface RoadSegment {
     height: number;
 }
 
+export interface Building {
+    id: number;
+    points: Point[];
+}
+
 export interface MapMetadata {
     total_lots: number;
     total_roads: number;
     description: string;
+    viewBox?: { x: number; y: number; width: number; height: number };
 }
 
 export interface MapData {
@@ -96,6 +102,7 @@ export interface MapData {
     road_network: { d: string | null };
     road_segments: RoadSegment[];
     lots: Omit<Lot, 'usage' | 'state'>[]; // Raw data doesn't have usage/state yet
+    buildings?: Building[];
 }
 
 export interface GameTime {

@@ -2,17 +2,20 @@
 
 ## Source Files
 
-- **bombay_map.svg**: Original vector map of Bombay Beach grid
+- **map/lots_BB_map.svg**: Vector lots map (lot boundaries)
+- **map/roads_BB_map.svg**: Vector roads map (road rectangles)
+- **map/houses_BB_map.svg**: Vector houses map (building footprints)
+- **map/image_BB_map.png**: Texture overlay aligned to the SVG viewBox
 - **map_data.json**: Extracted structured data
-- **extract_map.js**: Node script that parses SVG to JSON
+- **extract_map.js**: Node script that parses SVGs to JSON
 - **visualize_map.html**: Browser preview of extracted data
 
 ## Map Dimensions
 
-- **Width**: 3240.49 units
-- **Height**: 3010.69 units
-- **Total Lots**: 643
-- **Total Roads**: 16 (9 vertical, 7 horizontal)
+- **Width**: 7967.36 units
+- **Height**: 6847.15 units
+- **Total Lots**: 636
+- **Total Roads**: 14 (9 vertical, 5 horizontal)
 
 ## Coordinate System
 
@@ -26,26 +29,24 @@
 ### Vertical Roads (North-South)
 | ID | X Position | Width | Notes |
 |----|------------|-------|-------|
-| v-road-0 | 0 | ~19 | Western boundary |
-| v-road-1 | 402.61 | ~19 | |
-| v-road-2 | 805.30 | ~19 | |
-| v-road-3 | 1207.98 | ~19 | |
-| v-road-4 | 1610.67 | ~19 | |
-| v-road-5 | 2013.80 | ~19 | |
-| v-road-6 | 2416.00 | ~19 | |
-| v-road-7 | 2818.68 | ~19 | |
-| v-road-8 | 3221.40 | ~19 | Eastern boundary |
+| v-road-0 | 883.66 | ~67 | |
+| v-road-1 | 1635.86 | ~67 | |
+| v-road-2 | 2388.07 | ~67 | |
+| v-road-3 | 3140.27 | ~67 | |
+| v-road-4 | 3892.47 | ~67 | |
+| v-road-5 | 4644.12 | ~67 | |
+| v-road-6 | 5397.60 | ~67 | |
+| v-road-7 | 6148.98 | ~67 | |
+| v-road-8 | 6902.33 | ~67 | |
 
 ### Horizontal Roads (East-West)
 | ID | Y Position | Height | Notes |
 |----|------------|--------|-------|
-| h-road-0 | 0 | ~19 | Northern boundary |
-| h-road-1 | 231.68 | ~10 | |
-| h-road-2 | ~456 | ~20 | |
-| h-road-3 | ~706 | ~20 | |
-| h-road-4 | ~911 | ~20 | |
-| h-road-5 | ~1951 | ~20 | |
-| h-road-6 | ~2991 | ~19 | Southern boundary |
+| h-road-0 | 1230.65 | ~67 | |
+| h-road-1 | 1985.69 | ~67 | |
+| h-road-2 | 2716.95 | ~67 | |
+| h-road-3 | 4234.66 | ~67 | |
+| h-road-4 | 5720.16 | ~67 | |
 
 ## Lot Structure
 
@@ -63,20 +64,22 @@ Each lot in `map_data.json` follows this structure:
 }
 ```
 
-### Lot Grid
+### Building Structure
 
-The town is organized in a grid pattern:
-- **Columns**: 8 (between 9 vertical roads)
-- **Rows**: 6 (between 7 horizontal roads)
-- **Not all grid cells have lots** (some areas are irregular)
+Each building in `map_data.json` follows this structure:
 
-### Typical Lot Sizes
+```json
+{
+  "id": 0,
+  "points": [{ "x": 5487.47, "y": 2175.55 }]
+}
+```
 
-| Size Category | Dimensions | Count |
-|---------------|------------|-------|
-| Standard | ~383 x 212 | Most common |
-| Large | ~383 x 1020 | Southern blocks |
-| Small | ~383 x 193 | Some irregular |
+### Lot Layout
+
+Lots are represented as axis-aligned rectangles (bounding boxes) derived from the
+lots SVG. This removes irregular lot shapes and keeps the grid consistent for
+navigation/pathfinding.
 
 ## Real-World Mapping
 
@@ -120,8 +123,8 @@ const bounds = {
 ```typescript
 // SVG coordinates to game world (centered at origin)
 function svgToWorld(x: number, y: number): [number, number] {
-  const centerX = 3240.49 / 2;
-  const centerY = 3010.69 / 2;
+  const centerX = 7967.36 / 2;
+  const centerY = 6847.15 / 2;
   return [x - centerX, centerY - y]; // Flip Y for standard 3D coords
 }
 ```

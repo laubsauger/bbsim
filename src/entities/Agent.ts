@@ -37,9 +37,10 @@ export class Agent {
         this.position = config.position.clone();
         this.speed = config.speed;
 
-        // Visuals based on Type - scaled to fit roads (~19 units wide)
+        // Visuals based on Type - scaled to fit roads (~67 units wide)
         let width = 4, height = 10, depth = 4;
         let color = config.color || 0x00ff00;
+        const agentScale = 1.25;
 
         switch (this.type) {
             case AgentType.RESIDENT:
@@ -60,6 +61,10 @@ export class Agent {
                 color = config.color || 0xF5F5F5; // Off-white
                 break;
         }
+
+        width *= agentScale;
+        height *= agentScale;
+        depth *= agentScale;
 
         this.meshHeight = height;
 

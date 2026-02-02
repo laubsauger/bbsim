@@ -5,6 +5,7 @@ import * as THREE from 'three';
 // School bus yellow
 const BUS_COLOR = 0xFFB800;
 const BUS_TRIM_COLOR = 0x1A1A1A;
+const BUS_SCALE = 1.8;
 
 export class SchoolBus extends Agent {
     vehicleType: VehicleType = VehicleType.SCHOOL_BUS;
@@ -32,9 +33,9 @@ export class SchoolBus extends Agent {
         this.mesh.geometry.dispose();
 
         // Bus body dimensions (much larger than cars)
-        const bodyWidth = 10;
-        const bodyHeight = 8;
-        const bodyLength = 30;
+        const bodyWidth = 10 * BUS_SCALE;
+        const bodyHeight = 8 * BUS_SCALE;
+        const bodyLength = 30 * BUS_SCALE;
 
         // Main body
         const bodyGeo = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyLength);
@@ -45,25 +46,25 @@ export class SchoolBus extends Agent {
         this.busGroup.add(bodyMesh);
 
         // Black stripe at bottom
-        const stripeGeo = new THREE.BoxGeometry(bodyWidth + 0.1, 1.5, bodyLength + 0.1);
+        const stripeGeo = new THREE.BoxGeometry(bodyWidth + 0.1 * BUS_SCALE, 1.5 * BUS_SCALE, bodyLength + 0.1 * BUS_SCALE);
         const stripeMat = new THREE.MeshStandardMaterial({ color: BUS_TRIM_COLOR });
         const stripeMesh = new THREE.Mesh(stripeGeo, stripeMat);
-        stripeMesh.position.y = 0.75;
+        stripeMesh.position.y = 0.75 * BUS_SCALE;
         this.busGroup.add(stripeMesh);
 
         // Roof
-        const roofGeo = new THREE.BoxGeometry(bodyWidth - 1, 1, bodyLength - 2);
+        const roofGeo = new THREE.BoxGeometry(bodyWidth - 1 * BUS_SCALE, 1 * BUS_SCALE, bodyLength - 2 * BUS_SCALE);
         const roofMesh = new THREE.Mesh(roofGeo, bodyMat);
-        roofMesh.position.y = bodyHeight + 0.5;
+        roofMesh.position.y = bodyHeight + 0.5 * BUS_SCALE;
         roofMesh.castShadow = true;
         this.busGroup.add(roofMesh);
 
         // Windows (dark rectangles along sides)
         const windowMat = new THREE.MeshStandardMaterial({ color: 0x2A4A6A });
         const windowsPerSide = 6;
-        const windowWidth = 0.3;
-        const windowHeight = 2.5;
-        const windowLength = 3.5;
+        const windowWidth = 0.3 * BUS_SCALE;
+        const windowHeight = 2.5 * BUS_SCALE;
+        const windowLength = 3.5 * BUS_SCALE;
         const windowSpacing = bodyLength / (windowsPerSide + 1);
 
         for (let i = 0; i < windowsPerSide; i++) {
@@ -74,7 +75,7 @@ export class SchoolBus extends Agent {
                 new THREE.BoxGeometry(windowWidth, windowHeight, windowLength),
                 windowMat
             );
-            leftWindow.position.set(-bodyWidth / 2, bodyHeight - 1.5, zPos);
+            leftWindow.position.set(-bodyWidth / 2, bodyHeight - 1.5 * BUS_SCALE, zPos);
             this.busGroup.add(leftWindow);
 
             // Right side windows
@@ -82,42 +83,42 @@ export class SchoolBus extends Agent {
                 new THREE.BoxGeometry(windowWidth, windowHeight, windowLength),
                 windowMat
             );
-            rightWindow.position.set(bodyWidth / 2, bodyHeight - 1.5, zPos);
+            rightWindow.position.set(bodyWidth / 2, bodyHeight - 1.5 * BUS_SCALE, zPos);
             this.busGroup.add(rightWindow);
         }
 
         // Front windshield
-        const windshieldGeo = new THREE.BoxGeometry(bodyWidth - 2, 3, 0.3);
+        const windshieldGeo = new THREE.BoxGeometry(bodyWidth - 2 * BUS_SCALE, 3 * BUS_SCALE, 0.3 * BUS_SCALE);
         const windshieldMesh = new THREE.Mesh(windshieldGeo, windowMat);
-        windshieldMesh.position.set(0, bodyHeight - 2, bodyLength / 2);
+        windshieldMesh.position.set(0, bodyHeight - 2 * BUS_SCALE, bodyLength / 2);
         this.busGroup.add(windshieldMesh);
 
         // STOP sign on side (red square)
-        const stopSignGeo = new THREE.BoxGeometry(0.2, 2, 2);
+        const stopSignGeo = new THREE.BoxGeometry(0.2 * BUS_SCALE, 2 * BUS_SCALE, 2 * BUS_SCALE);
         const stopSignMat = new THREE.MeshStandardMaterial({ color: 0xCC0000 });
         const stopSign = new THREE.Mesh(stopSignGeo, stopSignMat);
-        stopSign.position.set(-bodyWidth / 2 - 0.1, bodyHeight / 2, 6);
+        stopSign.position.set(-bodyWidth / 2 - 0.1 * BUS_SCALE, bodyHeight / 2, 6 * BUS_SCALE);
         this.busGroup.add(stopSign);
 
         // Driver seat visualization
-        const occupantGeo = new THREE.CylinderGeometry(1.2, 1.2, 3, 8);
+        const occupantGeo = new THREE.CylinderGeometry(1.2 * BUS_SCALE, 1.2 * BUS_SCALE, 3 * BUS_SCALE, 8);
         const driverMat = new THREE.MeshStandardMaterial({ color: 0x333366 }); // Dark blue uniform
         this.driverSeat = new THREE.Mesh(occupantGeo, driverMat);
-        this.driverSeat.position.set(2, bodyHeight + 1, bodyLength / 2 - 3);
+        this.driverSeat.position.set(2 * BUS_SCALE, bodyHeight + 1 * BUS_SCALE, bodyLength / 2 - 3 * BUS_SCALE);
         this.driverSeat.visible = true; // Driver always visible
         this.busGroup.add(this.driverSeat);
 
         // Passenger seat positions (3 rows of 4)
         const passengerMat = new THREE.MeshStandardMaterial({ color: 0x4488AA }); // Light blue for kids
-        const passengerGeo = new THREE.CylinderGeometry(0.8, 0.8, 2, 6);
+        const passengerGeo = new THREE.CylinderGeometry(0.8 * BUS_SCALE, 0.8 * BUS_SCALE, 2 * BUS_SCALE, 6);
         const rows = 3;
         const seatsPerRow = 4;
         for (let row = 0; row < rows; row++) {
             for (let seat = 0; seat < seatsPerRow; seat++) {
                 const seatMesh = new THREE.Mesh(passengerGeo.clone(), passengerMat.clone());
-                const xPos = -3 + seat * 2;
-                const zPos = bodyLength / 2 - 8 - row * 5;
-                seatMesh.position.set(xPos, bodyHeight + 0.5, zPos);
+                const xPos = -3 * BUS_SCALE + seat * 2 * BUS_SCALE;
+                const zPos = bodyLength / 2 - 8 * BUS_SCALE - row * 5 * BUS_SCALE;
+                seatMesh.position.set(xPos, bodyHeight + 0.5 * BUS_SCALE, zPos);
                 seatMesh.visible = false;
                 this.passengerSeats.push(seatMesh);
                 this.busGroup.add(seatMesh);

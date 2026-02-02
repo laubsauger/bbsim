@@ -8,6 +8,7 @@ const CAR_COLORS = {
     tourist: 0x4ECDC4,   // Teal - tourist cars
     police: 0x5B8DEE,    // Blue - police cars
 };
+const VEHICLE_SCALE = 1.6;
 
 export class Vehicle extends Agent {
     isTouristCar: boolean = false;
@@ -33,9 +34,9 @@ export class Vehicle extends Agent {
         this.mesh.geometry.dispose();
 
         // Car body dimensions
-        const bodyWidth = 7;
-        const bodyHeight = 4;
-        const bodyLength = 14;
+        const bodyWidth = 7 * VEHICLE_SCALE;
+        const bodyHeight = 4 * VEHICLE_SCALE;
+        const bodyLength = 14 * VEHICLE_SCALE;
 
         // Car body color based on owner type - consistent colors
         let bodyColor: number;
@@ -56,14 +57,14 @@ export class Vehicle extends Agent {
 
         // Seat positions (2 front, 2 back) - visible from above as dark cutouts
         const seatPositions = [
-            { x: 1.5, z: 2.5 },    // Driver (front right)
-            { x: -1.5, z: 2.5 },   // Front passenger (front left)
-            { x: 1.5, z: -2 },     // Back right
-            { x: -1.5, z: -2 },    // Back left
+            { x: 1.5 * VEHICLE_SCALE, z: 2.5 * VEHICLE_SCALE },    // Driver (front right)
+            { x: -1.5 * VEHICLE_SCALE, z: 2.5 * VEHICLE_SCALE },   // Front passenger (front left)
+            { x: 1.5 * VEHICLE_SCALE, z: -2 * VEHICLE_SCALE },     // Back right
+            { x: -1.5 * VEHICLE_SCALE, z: -2 * VEHICLE_SCALE },    // Back left
         ];
 
         // Create seat cutouts (dark circles visible from above - empty seats)
-        const seatCutoutGeo = new THREE.CylinderGeometry(1.3, 1.3, 1, 12);
+        const seatCutoutGeo = new THREE.CylinderGeometry(1.3 * VEHICLE_SCALE, 1.3 * VEHICLE_SCALE, 1 * VEHICLE_SCALE, 12);
         const seatCutoutMat = new THREE.MeshStandardMaterial({
             color: 0x1a1a1a,
             polygonOffset: true,
@@ -78,7 +79,7 @@ export class Vehicle extends Agent {
         });
 
         // Occupant meshes (cylinders representing people sitting in seats)
-        const occupantGeo = new THREE.CylinderGeometry(1.1, 1.1, 3, 8);
+        const occupantGeo = new THREE.CylinderGeometry(1.1 * VEHICLE_SCALE, 1.1 * VEHICLE_SCALE, 3 * VEHICLE_SCALE, 8);
         // Occupant color matches car type
         let occupantColor: number;
         if (this.isPoliceCar) {
@@ -92,14 +93,14 @@ export class Vehicle extends Agent {
 
         // Driver seat (position 0)
         this.driverSeat = new THREE.Mesh(occupantGeo, occupantMat);
-        this.driverSeat.position.set(seatPositions[0].x, bodyHeight + 1.2, seatPositions[0].z);
+        this.driverSeat.position.set(seatPositions[0].x, bodyHeight + 1.2 * VEHICLE_SCALE, seatPositions[0].z);
         this.driverSeat.visible = false;
         this.carGroup.add(this.driverSeat);
 
         // Passenger seats (positions 1, 2, 3)
         for (let i = 1; i < seatPositions.length; i++) {
             const seat = new THREE.Mesh(occupantGeo.clone(), occupantMat.clone());
-            seat.position.set(seatPositions[i].x, bodyHeight + 1.2, seatPositions[i].z);
+            seat.position.set(seatPositions[i].x, bodyHeight + 1.2 * VEHICLE_SCALE, seatPositions[i].z);
             seat.visible = false;
             this.passengerSeats.push(seat);
             this.carGroup.add(seat);

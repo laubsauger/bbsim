@@ -68,6 +68,11 @@ export class PathfindingSystem {
         return this.currentHour >= open && this.currentHour < close;
     }
 
+    private isBarOpen(): boolean {
+        // 11am to 1am
+        return this.currentHour >= 11 || this.currentHour < 1;
+    }
+
     getRandomPointOnRoad(): THREE.Vector3 {
         if (this.roads.length === 0) return new THREE.Vector3();
         const road = this.roads[Math.floor(Math.random() * this.roads.length)];
@@ -304,14 +309,16 @@ export class PathfindingSystem {
 
     computeAccessPoints(lots: Lot[]) {
         this.lots = lots;
+        this.lotBoundsCache.clear();
         lots.forEach(lot => {
+            const bounds = this.getLotBounds(lot);
             let minDistance = Infinity;
             let accessPoint: THREE.Vector3 | null = null;
             let closestRoad: RoadSegment | null = null;
 
             // Lot center approximation
-            const centerX = lot.points.reduce((sum: number, p: Point) => sum + p.x, 0) / lot.points.length;
-            const centerY = lot.points.reduce((sum: number, p: Point) => sum + p.y, 0) / lot.points.length;
+            const centerX = (bounds.minX + bounds.maxX) / 2;
+            const centerY = (bounds.minY + bounds.maxY) / 2;
 
             // Find closest road
             for (const road of this.roads) {
@@ -502,6 +509,7 @@ export class PathfindingSystem {
     private debugPathFailCount = 0;
     private simTimeSeconds = 0;
     private streetParking: Map<string, string> = new Map();
+    private lotBoundsCache: Map<number, { minX: number; minY: number; maxX: number; maxY: number }> = new Map();
 
     // Check if a point is on any road
     isOnRoad(x: number, y: number): boolean {
@@ -684,6 +692,21 @@ export class PathfindingSystem {
         return !(agent instanceof Vehicle);
     }
 
+    private getLotBounds(lot: Lot) {
+        const cached = this.lotBoundsCache.get(lot.id);
+        if (cached) return cached;
+        const xs = lot.points.map(p => p.x);
+        const ys = lot.points.map(p => p.y);
+        const bounds = {
+            minX: Math.min(...xs),
+            minY: Math.min(...ys),
+            maxX: Math.max(...xs),
+            maxY: Math.max(...ys),
+        };
+        this.lotBoundsCache.set(lot.id, bounds);
+        return bounds;
+    }
+
     getStreetParkingSpot(lot: Lot, vehicleId?: string): { x: number; y: number; rotation: number; id: string } | null {
         const access = lot.roadAccessPoint || lot.entryPoint;
         if (!access) return null;
@@ -751,6 +774,8 @@ export class PathfindingSystem {
         if (isResident && agent.data.homeLot.id === lot.id) return true;
         if (lot.usage === LotUsage.PUBLIC) return true;
         if (lot.usage === LotUsage.COMMERCIAL) return this.isCommercialOpen();
+        if (lot.usage === LotUsage.BAR) return this.isBarOpen();
+        if (lot.usage === LotUsage.CHURCH) return true;
         if (lot.usage === LotUsage.LODGING && agent.data?.lodgingLot?.id === lot.id) return true;
         const type = agent.type || '';
         const baseTrespass = type === 'resident'
@@ -902,6 +927,7 @@ export class PathfindingSystem {
     }
 
     private getNearestGate(lot: Lot, point: Point): Point | null {
+        this.ensureLotAccess(lot);
         const gates = lot.gatePositions && lot.gatePositions.length > 0 ? lot.gatePositions : null;
         if (gates) {
             let nearest: Point | null = null;
@@ -921,12 +947,61 @@ export class PathfindingSystem {
         return null;
     }
 
+    private ensureLotAccess(lot: Lot) {
+        if (lot.roadAccessPoint && lot.entryPoint) return;
+        if (lot.points.length < 3) return;
+
+        let minDistance = Infinity;
+        let accessPoint: THREE.Vector3 | null = null;
+        let closestRoad: RoadSegment | null = null;
+
+        const centerX = lot.points.reduce((sum: number, p: Point) => sum + p.x, 0) / lot.points.length;
+        const centerY = lot.points.reduce((sum: number, p: Point) => sum + p.y, 0) / lot.points.length;
+
+        for (const road of this.roads) {
+            const px = Math.max(road.x, Math.min(centerX, road.x + road.width));
+            const py = Math.max(road.y, Math.min(centerY, road.y + road.height));
+
+            const dist = Math.sqrt(Math.pow(px - centerX, 2) + Math.pow(py - centerY, 2));
+
+            if (dist < minDistance) {
+                minDistance = dist;
+                accessPoint = new THREE.Vector3(px, 0, py);
+                closestRoad = road;
+            }
+        }
+
+        if (accessPoint && closestRoad) {
+            lot.roadAccessPoint = { x: accessPoint.x, y: accessPoint.z };
+
+            let minPtDist = Infinity;
+            let entryX = centerX;
+            let entryY = centerY;
+
+            for (let i = 0; i < lot.points.length; i++) {
+                const p1 = lot.points[i];
+                const p2 = lot.points[(i + 1) % lot.points.length];
+                const pt = this.closestPointOnSegment(p1, p2, { x: accessPoint.x, y: accessPoint.z });
+                const d = Math.sqrt(Math.pow(pt.x - accessPoint.x, 2) + Math.pow(pt.y - accessPoint.z, 2));
+
+                if (d < minPtDist) {
+                    minPtDist = d;
+                    entryX = pt.x;
+                    entryY = pt.y;
+                }
+            }
+            lot.entryPoint = { x: entryX, y: entryY };
+        }
+    }
+
     updateTraffic(agents: any[], delta: number) {
         this.simTimeSeconds += delta;
         if (this.parkingLegGroup) {
             this.updateParkingLegDebug(agents);
         }
         agents.forEach(agent => {
+            const isPedestrian = this.isPedestrian(agent);
+            const lotBefore = isPedestrian ? this.findLotContainingPoint(this.toSvg(agent.position), this.lots) : null;
             // Skip vehicles that are parked (no driver)
             if (agent instanceof Vehicle && !agent.driver) {
                 return;
@@ -1030,6 +1105,27 @@ export class PathfindingSystem {
                 }
             }
 
+            if (isPedestrian) {
+                const svg = this.toSvg(agent.position);
+                const onPublicPath = this.isOnSidewalk(svg.x, svg.y) || this.isOnRoad(svg.x, svg.y);
+                if (!onPublicPath) {
+                    const lotAfter = this.findLotContainingPoint(svg, this.lots);
+                    const clampLot = lotAfter || lotBefore;
+                    if (clampLot) {
+                        const bounds = this.getLotBounds(clampLot);
+                        const margin = 2;
+                        const clampedX = Math.min(bounds.maxX - margin, Math.max(bounds.minX + margin, svg.x));
+                        const clampedY = Math.min(bounds.maxY - margin, Math.max(bounds.minY + margin, svg.y));
+                        agent.position.x = clampedX;
+                        agent.position.z = clampedY;
+                    } else {
+                        const nearest = this.getNearestSidewalkPoint(svg.x, svg.y);
+                        agent.position.x = nearest.x;
+                        agent.position.z = nearest.y;
+                    }
+                }
+            }
+
             // Skip residents who are at home idle or have intentional destinations
             if (agent.behaviorState !== undefined) {
                 const state = agent.behaviorState as ResidentState;
@@ -1099,7 +1195,6 @@ export class PathfindingSystem {
                 const currentSvgX = agent.position.x;
                 const currentSvgY = agent.position.z;
 
-                const isPedestrian = this.isPedestrian(agent);
                 const onNetwork = isPedestrian
                     ? this.isOnSidewalk(currentSvgX, currentSvgY)
                     : this.isOnRoad(currentSvgX, currentSvgY);

@@ -12,18 +12,13 @@ export class World {
         this.roads = data.road_segments;
 
         // Specific lot assignments for key buildings
-        const SPECIAL_LOTS: Record<number, { usage: LotUsage; state: LotState }> = {
-            // The Bar area - top left corner
-            629: { usage: LotUsage.BAR, state: LotState.OCCUPIED },     // The Bar - second row, leftmost
-            624: { usage: LotUsage.PARKING, state: LotState.EMPTY },    // Parking - directly above bar
-            625: { usage: LotUsage.PARKING, state: LotState.EMPTY },    // Parking - above bar, to the right
-            628: { usage: LotUsage.PARKING, state: LotState.EMPTY },    // Parking - right of bar
-        };
+        // Map data is regenerated from SVGs, so avoid hardcoded lot IDs.
+        const specialLots = this.pickSpecialLots(data.lots);
 
         // Hydrate Lots with Simulation State
         this.lots = data.lots.map(raw => {
             // Check for special lot assignments first
-            const special = SPECIAL_LOTS[raw.id];
+            const special = specialLots.get(raw.id);
             if (special) {
                 return { ...raw, usage: special.usage, state: special.state };
             }
@@ -95,5 +90,60 @@ export class World {
     // Helper to find lot by ID
     getLot(id: number) {
         return this.lots.find(l => l.id === id);
+    }
+
+    private pickSpecialLots(lots: Lot[]): Map<number, { usage: LotUsage; state: LotState }> {
+        const special = new Map<number, { usage: LotUsage; state: LotState }>();
+        if (lots.length === 0) return special;
+
+        // Explicit assignments (stable across map regen)
+        const barLotId = 618;
+        const churchLotId = 556;
+        if (lots.some(lot => lot.id === barLotId)) {
+            special.set(barLotId, { usage: LotUsage.BAR, state: LotState.OCCUPIED });
+        }
+        if (lots.some(lot => lot.id === churchLotId)) {
+            special.set(churchLotId, { usage: LotUsage.CHURCH, state: LotState.OCCUPIED });
+        }
+
+        const lotCenters = lots.map(lot => {
+            const xs = lot.points.map(p => p.x);
+            const ys = lot.points.map(p => p.y);
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            const minY = Math.min(...ys);
+            const maxY = Math.max(...ys);
+            return {
+                id: lot.id,
+                cx: (minX + maxX) / 2,
+                cy: (minY + maxY) / 2,
+                area: Math.max(1, (maxX - minX) * (maxY - minY))
+            };
+        });
+
+        // Pick bar lot near the northwest corner of the map (lowest y, then lowest x)
+        const barCandidate = lotCenters.slice().sort((a, b) => (a.cy - b.cy) || (a.cx - b.cx))[0];
+        if (barCandidate && !special.has(barCandidate.id)) {
+            special.set(barCandidate.id, { usage: LotUsage.BAR, state: LotState.OCCUPIED });
+
+            // Pick a few nearby lots as parking
+            const nearest = lotCenters
+                .filter(l => l.id !== barCandidate.id)
+                .map(l => ({
+                    id: l.id,
+                    dist: Math.hypot(l.cx - barCandidate.cx, l.cy - barCandidate.cy),
+                    area: l.area
+                }))
+                .sort((a, b) => a.dist - b.dist)
+                .slice(0, 3);
+
+            nearest.forEach(n => {
+                if (!special.has(n.id)) {
+                    special.set(n.id, { usage: LotUsage.PARKING, state: LotState.EMPTY });
+                }
+            });
+        }
+
+        return special;
     }
 }

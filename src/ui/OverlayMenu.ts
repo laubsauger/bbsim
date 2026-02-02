@@ -1,4 +1,11 @@
-export type OverlayType = 'status' | 'zoning' | 'addresses' | 'prices' | 'noise' | 'pollution' | 'traffic';
+export type OverlayType =
+    | 'status'
+    | 'zoning'
+    | 'addresses'
+    | 'prices'
+    | 'noise'
+    | 'pollution'
+    | 'traffic';
 
 export interface OverlayState {
     status: boolean;

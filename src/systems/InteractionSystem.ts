@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { Lot, LotState, AgentType } from '../types';
+import { Agent } from '../entities/Agent';
+import { Resident } from '../entities/Resident';
+import { Vehicle } from '../entities/Vehicle';
+import { Tourist } from '../entities/Tourist';
 import { ExplorerEntityRef } from '../ui/EntityExplorer';
 
 export type FollowCallback = (target: THREE.Object3D | null, entity: ExplorerEntityRef | null) => void;
@@ -30,6 +34,8 @@ export class InteractionSystem {
     pathLine?: THREE.Line;
     pathLines: THREE.Line[] = [];
     tooltip: HTMLDivElement;
+    private agents: Agent[] = [];
+    private lotBoundsCache: Map<number, { minX: number; minY: number; maxX: number; maxY: number }> = new Map();
 
     private onFollowCallbacks: FollowCallback[] = [];
     private onSelectCallbacks: SelectCallback[] = [];
@@ -58,6 +64,10 @@ export class InteractionSystem {
         document.body.appendChild(this.tooltip);
 
         this.initEvents();
+    }
+
+    setAgents(agents: Agent[]) {
+        this.agents = agents;
     }
 
     initEvents() {
@@ -147,11 +157,18 @@ export class InteractionSystem {
                     if (data.type === 'lot') {
                         const lot = data.data as Lot;
                         const addressStr = lot.address ? lot.address.fullAddress : `Lot #${lot.id}`;
+                        const presentEntities = this.getEntitiesInLot(lot);
+                        const presentHtml = presentEntities.length
+                            ? presentEntities.map(label => `<div>${label}</div>`).join('')
+                            : `<span style="color:#888">None</span>`;
                         hits.push(`
                             <div style="margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px;">
                                 <strong style="color: #4db8ff">📍 ${addressStr}</strong><br>
+                                Lot ID: ${lot.id}<br>
                                 State: <span style="color: ${this.getStateColor(lot.state)}">${lot.state}</span><br>
-                                Usage: ${lot.usage || 'N/A'}
+                                Usage: ${lot.usage || 'N/A'}<br>
+                                <span style="color:#aaa">Present:</span>
+                                <div style="margin-top:4px; max-height:90px; overflow:hidden;">${presentHtml}</div>
                             </div>
                         `);
                     } else if (data.type === 'vehicle') {
@@ -265,6 +282,70 @@ export class InteractionSystem {
             });
             this.pathLines = [];
         }
+    }
+
+    private getLotBounds(lot: Lot) {
+        const cached = this.lotBoundsCache.get(lot.id);
+        if (cached) return cached;
+        const xs = lot.points.map(p => p.x);
+        const ys = lot.points.map(p => p.y);
+        const bounds = {
+            minX: Math.min(...xs),
+            minY: Math.min(...ys),
+            maxX: Math.max(...xs),
+            maxY: Math.max(...ys),
+        };
+        this.lotBoundsCache.set(lot.id, bounds);
+        return bounds;
+    }
+
+    private getEntitiesInLot(lot: Lot): string[] {
+        if (!this.agents || this.agents.length === 0) return [];
+        const bounds = this.getLotBounds(lot);
+        const labels: string[] = [];
+        for (const agent of this.agents) {
+            if (agent instanceof Resident && agent.isInCar) continue;
+            const x = agent.position.x;
+            const y = agent.position.z;
+            if (x < bounds.minX || x > bounds.maxX || y < bounds.minY || y > bounds.maxY) continue;
+
+            if (agent instanceof Vehicle) {
+                const label = agent.isPoliceCar ? `🚔 Police Car ${agent.id}` : agent.isTouristCar ? `🚗 Tourist Car ${agent.id}` : `🚗 Car ${agent.id}`;
+                labels.push(label);
+                continue;
+            }
+
+            if (agent instanceof Resident) {
+                labels.push(`🧍 ${agent.fullName}`);
+                continue;
+            }
+
+            if (agent instanceof Tourist) {
+                const tid = agent.data?.id || agent.id;
+                labels.push(`📷 Tourist ${tid}`);
+                continue;
+            }
+
+            switch (agent.type) {
+                case AgentType.DOG:
+                    labels.push(`🐶 Dog ${agent.id}`);
+                    break;
+                case AgentType.CAT:
+                    labels.push(`🐱 Cat ${agent.id}`);
+                    break;
+                case AgentType.COP:
+                    labels.push(`👮 Cop ${agent.id}`);
+                    break;
+                default:
+                    labels.push(`${agent.type} ${agent.id}`);
+                    break;
+            }
+        }
+
+        if (labels.length > 6) {
+            return [...labels.slice(0, 6), `+${labels.length - 6} more`];
+        }
+        return labels;
     }
 
     // Helper methods using consistent colors

@@ -1,54 +1,87 @@
 const fs = require('fs');
 const path = require('path');
 
-const svgPath = path.join(__dirname, 'bombay_map.svg');
+const mapDir = path.join(__dirname, 'map');
+const lotsSvgPath = path.join(mapDir, 'lots_BB_map.svg');
+const roadsSvgPath = path.join(mapDir, 'roads_BB_map.svg');
+const housesSvgPath = path.join(mapDir, 'houses_BB_map.svg');
 const outputPath = path.join(__dirname, 'map_data.json');
 
-const svgContent = fs.readFileSync(svgPath, 'utf8');
+const lotsSvgContent = fs.readFileSync(lotsSvgPath, 'utf8');
+const roadsSvgContent = fs.readFileSync(roadsSvgPath, 'utf8');
+const housesSvgContent = fs.readFileSync(housesSvgPath, 'utf8');
 
 // --- Parsing Logic ---
 
 const lots = [];
-let roadNetwork = null;
+const buildings = [];
+const roadNetwork = null;
+let viewBox = null;
 
-// Helper to parse numbers
-const parseNum = (str) => parseFloat(str);
+const parseNum = (str) => (str ? parseFloat(str) : 0);
 
-// Helper to get transform
-const getTransform = (str) => {
-    if (!str) return { x: 0, y: 0, rotate: 0 };
-    let x = 0, y = 0, rotate = 0;
+const parseViewBox = (svg) => {
+    const match = svg.match(/viewBox="([^"]+)"/);
+    if (!match) return null;
+    const parts = match[1].trim().split(/[\s,]+/).map(parseFloat);
+    if (parts.length !== 4 || parts.some(Number.isNaN)) return null;
+    return { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+};
 
-    const translateMatch = str.match(/translate\(([^,]+)\s+([^)]+)\)/);
-    if (translateMatch) {
-        x = parseNum(translateMatch[1]);
-        y = parseNum(translateMatch[2]); // Space separated usually in SVG d="M..." but transform is often comma or space
-    }
-    // Wait, regex above expects space. Let's make it robust.
-    // transform="translate(289.66 2356.22) rotate(-90)"
-
-    const translateMatch2 = str.match(/translate\(([^)]+)\)/);
-    if (translateMatch2) {
-        const parts = translateMatch2[1].trim().split(/[\s,]+/);
-        if (parts.length >= 2) {
-            x = parseFloat(parts[0]);
-            y = parseFloat(parts[1]);
+const parseTransformList = (str) => {
+    if (!str) return [];
+    const ops = [];
+    const regex = /([a-zA-Z]+)\(([^)]+)\)/g;
+    let match = null;
+    while ((match = regex.exec(str)) !== null) {
+        const type = match[1];
+        const values = match[2].trim().split(/[\s,]+/).map(parseFloat);
+        if (type === 'translate' || type === 'rotate' || type === 'scale') {
+            ops.push({ type, values });
         }
     }
+    return ops;
+};
 
-    const rotateMatch = str.match(/rotate\(([^)]+)\)/);
-    if (rotateMatch) {
-        rotate = parseNum(rotateMatch[1]);
-    }
-
-    return { x, y, rotate };
+const applyTransforms = (points, transformStr) => {
+    const ops = parseTransformList(transformStr);
+    if (!ops.length) return points;
+    return points.map((p) => {
+        let x = p.x;
+        let y = p.y;
+        for (let i = ops.length - 1; i >= 0; i--) {
+            const op = ops[i];
+            if (op.type === 'translate') {
+                const tx = op.values[0] ?? 0;
+                const ty = op.values[1] ?? 0;
+                x += tx;
+                y += ty;
+            } else if (op.type === 'rotate') {
+                const angle = (op.values[0] ?? 0) * (Math.PI / 180);
+                const cx = op.values[1] ?? 0;
+                const cy = op.values[2] ?? 0;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                const dx = x - cx;
+                const dy = y - cy;
+                x = cx + dx * cos - dy * sin;
+                y = cy + dx * sin + dy * cos;
+            } else if (op.type === 'scale') {
+                const sx = op.values[0] ?? 1;
+                const sy = op.values[1] ?? sx;
+                x *= sx;
+                y *= sy;
+            }
+        }
+        return { x, y };
+    });
 };
 
 // 1. Extract Lots (Rects)
-// <rect class="cls-1" x="2837.77" y="1971.06" width="191.81" height="68.03"/>
-// <rect className="cls-1" ... matches generic
-const rectRegex = /<rect[^>]+class="cls-1"[^>]*>/g;
-const rects = svgContent.match(rectRegex) || [];
+viewBox = parseViewBox(lotsSvgContent) || parseViewBox(roadsSvgContent);
+
+const rectRegex = /<rect\b[^>]*>/g;
+const rects = lotsSvgContent.match(rectRegex) || [];
 
 rects.forEach(rectStr => {
     const getAttr = (name) => {
@@ -61,28 +94,18 @@ rects.forEach(rectStr => {
     const width = parseNum(getAttr('width'));
     const height = parseNum(getAttr('height'));
     const transformStr = getAttr('transform');
-    const transform = getTransform(transformStr);
-
-    // Calculate vertices for polygon representation (handling rotation)
-    // Center of rotation for SVG rot is usually 0,0 unless specified, but here it's likely complex.
-    // Actually, distinct transforms like "translate(...) rotate(...)" imply a coordinate system shift.
-    // If it's just <rect x=".." ... transform="..." />, the transform applies to the rect.
-
-    // Simplification: Store the raw rect data, convert to polygon points for overlap check.
 
     lots.push({
         type: 'rect',
         x, y, width, height,
-        transform: transformStr,
-        // Computed absolute geometry for checking
-        geometry: computeRectPolygon(x, y, width, height, transform)
+        transform: transformStr || undefined,
+        geometry: applyTransforms(computeRectPolygon(x, y, width, height), transformStr)
     });
 });
 
 // 2. Extract Lots (Polylines)
-// <polyline class="cls-1" points="1151.14 910.87 1207.97 910.87 ..."/>
-const polylineRegex = /<polyline[^>]+class="cls-1"[^>]*>/g;
-const polylines = svgContent.match(polylineRegex) || [];
+const polylineRegex = /<polyline\b[^>]*>/g;
+const polylines = lotsSvgContent.match(polylineRegex) || [];
 
 polylines.forEach(polyStr => {
     const getAttr = (name) => {
@@ -92,77 +115,140 @@ polylines.forEach(polyStr => {
 
     const pointsStr = getAttr('points');
     if (pointsStr) {
-        // Parse points "x1 y1 x2 y2 ..."
         const coords = pointsStr.trim().split(/[\s,]+/).map(parseNum);
         const points = [];
         for (let i = 0; i < coords.length; i += 2) {
             points.push({ x: coords[i], y: coords[i + 1] });
         }
 
+        const transformStr = getAttr('transform');
         lots.push({
             type: 'polyline',
-            points: points,
-            geometry: points // It's already a polygon
+            points,
+            geometry: applyTransforms(points, transformStr)
         });
     }
 });
 
-// 3. Extract Road Network (Path)
-// <path class="cls-2" d="..."/>
-const pathRegex = /<path[^>]+class="cls-2"[^>]*>/g;
-const pathToMatch = svgContent.match(pathRegex);
+// 3. Extract Lots (Paths)
+const pathRegex = /<path\b[^>]*>/g;
+const paths = lotsSvgContent.match(pathRegex) || [];
 
-if (pathToMatch && pathToMatch[0]) {
-    const match = pathToMatch[0].match(/d="([^"]+)"/);
-    if (match) {
-        roadNetwork = match[1];
+paths.forEach(pathStr => {
+    const getAttr = (name) => {
+        const match = pathStr.match(new RegExp(`${name}="([^"]+)"`));
+        return match ? match[1] : null;
+    };
+    const d = getAttr('d');
+    if (!d) return;
+    const transformStr = getAttr('transform');
+    const points = parsePathToPoints(d);
+    if (!points.length) return;
+    lots.push({
+        type: 'path',
+        points,
+        transform: transformStr || undefined,
+        geometry: applyTransforms(points, transformStr)
+    });
+});
+
+// 4. Extract Buildings (Houses SVG)
+const houseRects = housesSvgContent.match(rectRegex) || [];
+houseRects.forEach(rectStr => {
+    const getAttr = (name) => {
+        const match = rectStr.match(new RegExp(`${name}="([^"]+)"`));
+        return match ? match[1] : null;
+    };
+
+    const x = parseNum(getAttr('x'));
+    const y = parseNum(getAttr('y'));
+    const width = parseNum(getAttr('width'));
+    const height = parseNum(getAttr('height'));
+    const transformStr = getAttr('transform');
+
+    buildings.push({
+        type: 'rect',
+        x, y, width, height,
+        transform: transformStr || undefined,
+        geometry: applyTransforms(computeRectPolygon(x, y, width, height), transformStr)
+    });
+});
+
+const housePolylines = housesSvgContent.match(polylineRegex) || [];
+housePolylines.forEach(polyStr => {
+    const getAttr = (name) => {
+        const match = polyStr.match(new RegExp(`${name}="([^"]+)"`));
+        return match ? match[1] : null;
+    };
+
+    const pointsStr = getAttr('points');
+    if (pointsStr) {
+        const coords = pointsStr.trim().split(/[\s,]+/).map(parseNum);
+        const points = [];
+        for (let i = 0; i < coords.length; i += 2) {
+            points.push({ x: coords[i], y: coords[i + 1] });
+        }
+
+        const transformStr = getAttr('transform');
+        buildings.push({
+            type: 'polyline',
+            points,
+            geometry: applyTransforms(points, transformStr)
+        });
     }
-}
+});
 
+const housePolygons = housesSvgContent.match(/<polygon\b[^>]*>/g) || [];
+housePolygons.forEach(polyStr => {
+    const getAttr = (name) => {
+        const match = polyStr.match(new RegExp(`${name}="([^"]+)"`));
+        return match ? match[1] : null;
+    };
+
+    const pointsStr = getAttr('points');
+    if (pointsStr) {
+        const coords = pointsStr.trim().split(/[\s,]+/).map(parseNum);
+        const points = [];
+        for (let i = 0; i < coords.length; i += 2) {
+            points.push({ x: coords[i], y: coords[i + 1] });
+        }
+
+        const transformStr = getAttr('transform');
+        buildings.push({
+            type: 'polyline',
+            points,
+            geometry: applyTransforms(points, transformStr)
+        });
+    }
+});
+
+const housePaths = housesSvgContent.match(pathRegex) || [];
+housePaths.forEach(pathStr => {
+    const getAttr = (name) => {
+        const match = pathStr.match(new RegExp(`${name}="([^"]+)"`));
+        return match ? match[1] : null;
+    };
+    const d = getAttr('d');
+    if (!d) return;
+    const transformStr = getAttr('transform');
+    const points = parsePathToPoints(d);
+    if (!points.length) return;
+    buildings.push({
+        type: 'path',
+        points,
+        transform: transformStr || undefined,
+        geometry: applyTransforms(points, transformStr)
+    });
+});
 // --- Geometry Helpers ---
 
-function computeRectPolygon(x, y, w, h, transform) {
-    // 4 corners un-transformed
-    // (x, y), (x+w, y), (x+w, y+h), (x, y+h)
-    let corners = [
+function computeRectPolygon(x, y, w, h) {
+    return [
         { x: x, y: y },
         { x: x + w, y: y },
         { x: x + w, y: y + h },
         { x: x, y: y + h }
     ];
-
-    // Apply transform: translate then rotate (order depends on SVG string parsing, usually right-to-left math, but SVG 'transform' attribute is left-to-right applied)
-    // "translate(tx, ty) rotate(deg)" -> first translate, then rotate around origin (0,0) of the new system? 
-    // Wait, SVG transform="translate(tx ty) rotate(a)" means:
-    // P_new = T * R * P_old? No, it's applied in order. Translate, THEN rotate.
-    // Actually, rotate(a) rotates around (0,0) unless rotate(a, cx, cy).
-
-    // Let's implement basic matrix multiplication for robustness or just approximate if complex.
-    // Given the file content: transform="translate(289.66 2356.22) rotate(-90)"
-    // This looks like standard SVG.
-
-    const { x: tx, y: ty, rotate: deg } = transform;
-    const rad = deg * (Math.PI / 180);
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-
-    return corners.map(p => {
-        // 1. If transform is typically just T, R.
-        // Actually, if it's "translate(...) rotate(...)"
-        // We apply Rotate first? No, SVG transforms are pre-multiplied. 
-        // Matrix = Translate_mat * Rotate_mat.
-        // Point' = Matrix * Point.
-        // So Point' = Translate * (Rotate * Point). 
-        // Effectively: Rotate point around 0,0, then Translate.
-
-        // Wait, order in SVG attribute: transform="A B C" -> P' = A(B(C(P)))
-        // So "translate T rotate R" -> P' = T( R(P) )
-        // Rotate P around (0,0) by deg
-        let rx = p.x * cos - p.y * sin;
-        let ry = p.x * sin + p.y * cos;
-        // Translate
-        return { x: rx + tx, y: ry + ty };
-    });
 }
 
 function getPolygonBounds(points) {
@@ -176,246 +262,154 @@ function getPolygonBounds(points) {
     return { minX, minY, maxX, maxY };
 }
 
-// Point in Polygon (Ray Casting)
-function isPointInPolygon(p, polygon) {
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-        const xi = polygon[i].x, yi = polygon[i].y;
-        const xj = polygon[j].x, yj = polygon[j].y;
-
-        const intersect = ((yi > p.y) !== (yj > p.y)) &&
-            (p.x < (xj - xi) * (p.y - yi) / (yj - yi) + xi);
-        if (intersect) inside = !inside;
-    }
-    return inside;
-}
-
-// Check if Poly A is inside Poly B
-function isPolyInsidePoly(polyA, polyB) {
-    // Check all points of A are inside B
-    return polyA.every(p => isPointInPolygon(p, polyB));
-}
-
-// Check if basically identical (all points matching within tolerance)
 function arePolysIdentical(polyA, polyB) {
     if (polyA.length !== polyB.length) return false;
-    // Basic check: sort points or check closest.
-    // If exact dupe, order might be same.
-    // Let's just check centers or bounds first.
     const bA = getPolygonBounds(polyA);
     const bB = getPolygonBounds(polyB);
 
-    if (Math.abs(bA.minX - bB.minX) > 0.1) return false;
-    if (Math.abs(bA.maxX - bB.maxX) > 0.1) return false;
-    if (Math.abs(bA.minY - bB.minY) > 0.1) return false;
-    if (Math.abs(bA.maxY - bB.maxY) > 0.1) return false;
-
-    // Deep check
-    // Sum of distances?
-    return true; // Good enough for "doubled up" if bounds match exactly for rects
+    if (Math.abs(bA.minX - bB.minX) > 0.01) return false;
+    if (Math.abs(bA.maxX - bB.maxX) > 0.01) return false;
+    if (Math.abs(bA.minY - bB.minY) > 0.01) return false;
+    if (Math.abs(bA.maxY - bB.maxY) > 0.01) return false;
+    return true;
 }
 
+function parsePathToPoints(d) {
+    const tokens = d.match(/([a-zA-Z])|([-+]?[0-9]*\.?[0-9]+(?:e[-+]?\d+)?)/g);
+    if (!tokens) return [];
 
-// --- Road Segmentation Logic ---
+    const points = [];
+    let cx = 0;
+    let cy = 0;
+    let i = 0;
 
-// 1. Parse Road Network path to find "Blocks" (Holes)
-// The path d usually starts with the outer boundary M0,0...Z, then follows with holes M...Z
-// We'll assume any subpath that is NOT the outer boundary is a Block.
+    const pushPoint = (x, y) => {
+        const last = points[points.length - 1];
+        if (!last || last.x !== x || last.y !== y) {
+            points.push({ x, y });
+        }
+    };
 
-function parsePathToPolygons(d) {
-    // Naive split by 'M' or 'm'
-    // This depends heavily on the SVG format. The file shows "M...Z M...Z"
-    // So splitting by 'M' should work (ignoring first empty if starts with M)
-    const commands = d.split(/(?=[Mm])/);
-    const polygons = [];
+    while (i < tokens.length) {
+        const token = tokens[i++];
+        if (!token) continue;
 
-    commands.forEach(cmd => {
-        if (!cmd.trim()) return;
-
-        // Very basic parser for h/v/l commands
-        // We assume absolute/relative coords.
-        // The file uses: "M2837.78,19.1h383.62v212.52h-383.62V19.1Z"
-        // It's mostly rects defined by h/v.
-
-        const points = [];
-        let cx = 0, cy = 0;
-
-        // Regex to tokenize: command letter + float
-        const tokens = cmd.match(/([a-zA-Z])|([-+]?[0-9]*\.?[0-9]+)/g);
-
-        if (!tokens) return;
-
-        let i = 0;
-        while (i < tokens.length) {
-            const token = tokens[i];
-
-            if (/[a-zA-Z]/.test(token)) {
-                const op = token;
-                i++;
-
-                switch (op) {
-                    case 'M':
-                        cx = parseFloat(tokens[i++]);
-                        cy = parseFloat(tokens[i++]); // Comma often consumed or split? regex above splits nums
-                        points.push({ x: cx, y: cy });
-                        break;
-                    case 'L':
-                        cx = parseFloat(tokens[i++]);
-                        cy = parseFloat(tokens[i++]);
-                        points.push({ x: cx, y: cy });
-                        break;
-                    case 'h': // relative horizontal
-                        cx += parseFloat(tokens[i++]);
-                        points.push({ x: cx, y: cy });
-                        break;
-                    case 'H': // absolute horizontal
-                        cx = parseFloat(tokens[i++]);
-                        points.push({ x: cx, y: cy });
-                        break;
-                    case 'v': // relative vertical
-                        cy += parseFloat(tokens[i++]);
-                        points.push({ x: cx, y: cy });
-                        break;
-                    case 'V':
-                        cy = parseFloat(tokens[i++]);
-                        points.push({ x: cx, y: cy });
-                        break;
-                    case 'Z':
-                    case 'z':
-                        // Close path
-                        break;
+        if (/[a-zA-Z]/.test(token)) {
+            const op = token;
+            switch (op) {
+                case 'M':
+                    cx = parseFloat(tokens[i++]);
+                    cy = parseFloat(tokens[i++]);
+                    pushPoint(cx, cy);
+                    break;
+                case 'm':
+                    cx += parseFloat(tokens[i++]);
+                    cy += parseFloat(tokens[i++]);
+                    pushPoint(cx, cy);
+                    break;
+                case 'H':
+                    cx = parseFloat(tokens[i++]);
+                    pushPoint(cx, cy);
+                    break;
+                case 'h':
+                    cx += parseFloat(tokens[i++]);
+                    pushPoint(cx, cy);
+                    break;
+                case 'V':
+                    cy = parseFloat(tokens[i++]);
+                    pushPoint(cx, cy);
+                    break;
+                case 'v':
+                    cy += parseFloat(tokens[i++]);
+                    pushPoint(cx, cy);
+                    break;
+                case 'C': {
+                    const x1 = parseFloat(tokens[i++]);
+                    const y1 = parseFloat(tokens[i++]);
+                    const x2 = parseFloat(tokens[i++]);
+                    const y2 = parseFloat(tokens[i++]);
+                    const x = parseFloat(tokens[i++]);
+                    const y = parseFloat(tokens[i++]);
+                    cx = x;
+                    cy = y;
+                    pushPoint(cx, cy);
+                    void (x1 + y1 + x2 + y2);
+                    break;
                 }
-            } else {
-                i++; // skip implicit?
+                case 'c': {
+                    const dx1 = parseFloat(tokens[i++]);
+                    const dy1 = parseFloat(tokens[i++]);
+                    const dx2 = parseFloat(tokens[i++]);
+                    const dy2 = parseFloat(tokens[i++]);
+                    const dx = parseFloat(tokens[i++]);
+                    const dy = parseFloat(tokens[i++]);
+                    cx += dx;
+                    cy += dy;
+                    pushPoint(cx, cy);
+                    void (dx1 + dy1 + dx2 + dy2);
+                    break;
+                }
+                case 'Z':
+                case 'z':
+                    break;
+                default:
+                    break;
             }
         }
+    }
 
-        polygons.push(points);
-    });
-
-    return polygons;
+    return points;
 }
 
-const roadPolys = parsePathToPolygons(roadNetwork);
-// First poly is likely the outer bound (0,0 to max). Rest are holes.
-// Let's verify bounds.
-const blocks = [];
-let mapBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
-
-roadPolys.forEach((poly, idx) => {
-    const bounds = getPolygonBounds(poly);
-    if (idx === 0) {
-        mapBounds = bounds;
-        // Check if it's the big one
-        // If it starts at 0,0 and is huge, it's the container.
-        // Assuming first is container based on "M0,0..."
-    } else {
-        blocks.push(bounds);
-    }
-});
-
-console.log(`Found ${blocks.length} blocks.`);
-
-// 2. Find Gaps (Road Segments)
-// Algorithm:
-// Project blocks to X axis. Find uncovered intervals -> Vertical Roads.
-// Project blocks to Y axis. Find uncovered intervals -> Horizontal Roads.
+// --- Road Extraction ---
 
 const roadSegments = [];
+const roadRects = roadsSvgContent.match(rectRegex) || [];
 
-// Helper: Merge intervals and find gaps
-function findGaps(items, min, max, itemStartProp, itemEndProp, gapMinSize = 10) {
-    // distinct sorted coordinates (starts and ends)
-    let coords = new Set([min, max]);
-    items.forEach(item => {
-        coords.add(item[itemStartProp]);
-        coords.add(item[itemEndProp]);
-    });
-    const sortedCoords = Array.from(coords).sort((a, b) => a - b);
+roadRects.forEach(rectStr => {
+    const getAttr = (name) => {
+        const match = rectStr.match(new RegExp(`${name}="([^"]+)"`));
+        return match ? match[1] : null;
+    };
 
-    const gaps = [];
+    const x = parseNum(getAttr('x'));
+    const y = parseNum(getAttr('y'));
+    const width = parseNum(getAttr('width'));
+    const height = parseNum(getAttr('height'));
+    const transformStr = getAttr('transform');
 
-    for (let i = 0; i < sortedCoords.length - 1; i++) {
-        const start = sortedCoords[i];
-        const end = sortedCoords[i + 1];
-        const mid = (start + end) / 2;
-        const width = end - start;
+    const poly = applyTransforms(computeRectPolygon(x, y, width, height), transformStr);
+    const bounds = getPolygonBounds(poly);
+    const segWidth = bounds.maxX - bounds.minX;
+    const segHeight = bounds.maxY - bounds.minY;
+    const type = segWidth >= segHeight ? 'horizontal' : 'vertical';
 
-        if (width < gapMinSize) continue;
-
-        // Check if mid is inside ANY item
-        const isCovered = items.some(item => mid > item[itemStartProp] && mid < item[itemEndProp]);
-
-        if (!isCovered) {
-            gaps.push({ start, end, size: width });
-        }
-    }
-    return gaps;
-}
-
-// Vertical Roads (Gaps in X projection)
-// We need to check columns.
-// Issue: A vertical road might not span the FULL map height.
-// Refined algo:
-// Sweep line? 
-// Or simpler: The town implies a grid.
-// Let's try finding the major grid lines first.
-// If I take ALL X coordinates of blocks, the usage pattern might correspond to "Lanes".
-// But let's stick to the user request "Separate into individual road segments".
-// If I find a vertical gap X1-X2 that runs from Y1 to Y2, that's a segment.
-
-// Let's try to detect the "Grid".
-// Get unique Xs from blocks.
-// Sort them.
-// Identify "common" Gaps that repeat? 
-// Actually, standard gap finding across the whole map might work if the grid is regular.
-
-const vGaps = findGaps(blocks, mapBounds.minX, mapBounds.maxX, 'minX', 'maxX');
-// For each vGap (which is an X range), check its Y extend.
-// Naively, assume it spans the whole map for now, but trimmed by map bounds.
-// Realistically, we should check if there's an obstacle in the gap?
-// By definition of findGaps, there are NO blocks in this X-range.
-// So these are vertical strips that run from top to bottom of the map completely clear of blocks.
-vGaps.forEach((gap, idx) => {
     roadSegments.push({
-        id: `v-road-${idx}`,
-        type: 'vertical',
-        x: gap.start,
-        y: mapBounds.minY,
-        width: gap.size,
-        height: mapBounds.maxY - mapBounds.minY
+        id: '',
+        type,
+        x: Number(bounds.minX.toFixed(2)),
+        y: Number(bounds.minY.toFixed(2)),
+        width: Number(segWidth.toFixed(2)),
+        height: Number(segHeight.toFixed(2))
     });
 });
 
-// Horizontal Roads (Gaps in Y projection)
-const hGaps = findGaps(blocks, mapBounds.minY, mapBounds.maxY, 'minY', 'maxY');
-hGaps.forEach((gap, idx) => {
-    roadSegments.push({
-        id: `h-road-${idx}`,
-        type: 'horizontal',
-        x: mapBounds.minX,
-        y: gap.start,
-        width: mapBounds.maxX - mapBounds.minX,
-        height: gap.size
-    });
-});
+const verticalRoads = roadSegments.filter(r => r.type === 'vertical').sort((a, b) => a.x - b.x);
+const horizontalRoads = roadSegments.filter(r => r.type === 'horizontal').sort((a, b) => a.y - b.y);
+verticalRoads.forEach((r, idx) => { r.id = `v-road-${idx}`; });
+horizontalRoads.forEach((r, idx) => { r.id = `h-road-${idx}`; });
 
-// Note: Intersections are where they cross.
-// This naive projection assumes the roads go ALL the way across.
-// If the map has "T" intersections or terminated roads, this logic fails (it won't find the gap because a block blocks it elsewhere).
-// But looking at the map preview or d-path `M0,0v3010...` implies a rect boundary.
-// Let's assume a grid first. If the visualization looks wrong (missing segments), I'll refine.
+roadSegments.length = 0;
+roadSegments.push(...verticalRoads, ...horizontalRoads);
 
 console.log(`Identified ${roadSegments.length} road segments.`);
 
-// Update output to include segments
 // --- Cleaning & Deduping ---
 console.log(`Initial Lot Count: ${lots.length}`);
 
 const uniqueLots = [];
 const discardedIndices = new Set();
 
-// 1. Mark identical or contained lots
 for (let i = 0; i < lots.length; i++) {
     if (discardedIndices.has(i)) continue;
 
@@ -427,43 +421,46 @@ for (let i = 0; i < lots.length; i++) {
 
         if (arePolysIdentical(polyA, polyB)) {
             discardedIndices.add(j);
-            continue;
-        }
-
-        if (isPolyInsidePoly(polyA, polyB)) {
-            discardedIndices.add(i);
-            break;
-        }
-
-        if (isPolyInsidePoly(polyB, polyA)) {
-            discardedIndices.add(j);
         }
     }
 }
 
-// Build final list
 lots.forEach((lot, index) => {
     if (!discardedIndices.has(index)) {
+        const bounds = getPolygonBounds(lot.geometry);
+        const rectPoints = [
+            { x: bounds.minX, y: bounds.minY },
+            { x: bounds.maxX, y: bounds.minY },
+            { x: bounds.maxX, y: bounds.maxY },
+            { x: bounds.minX, y: bounds.maxY },
+        ];
         uniqueLots.push({
             id: index,
-            points: lot.geometry.map(p => ({ x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)) }))
+            points: rectPoints.map(p => ({ x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)) }))
         });
     }
 });
 
 console.log(`Final Lot Count: ${uniqueLots.length}`);
 
+const uniqueBuildings = buildings.map((b, index) => ({
+    id: index,
+    points: b.geometry.map(p => ({ x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)) }))
+}));
+
 const output = {
     metadata: {
         total_lots: uniqueLots.length,
         total_roads: roadSegments.length,
-        description: "Map data extracted from bombay_map.svg"
+        description: "Map data extracted from lots_BB_map.svg and roads_BB_map.svg",
+        viewBox: viewBox || undefined
     },
     road_network: {
         d: roadNetwork
     },
     road_segments: roadSegments,
-    lots: uniqueLots
+    lots: uniqueLots,
+    buildings: uniqueBuildings
 };
 
 fs.writeFileSync(outputPath, JSON.stringify(output, null, 2));

@@ -272,6 +272,7 @@ async function init() {
 
     // Interaction
     const interactionSystem = new InteractionSystem(camera, scene);
+    interactionSystem.setAgents(agents);
 
     // Entity Explorer
     let focusMode: FocusMode = 'both';
@@ -392,12 +393,80 @@ async function init() {
         });
     };
 
+    type DebugLayer = 'debug_roads' | 'debug_lots' | 'debug_buildings';
+    type DebugOverlayController = {
+        setVisible: (layer: DebugLayer, enabled: boolean) => void;
+    };
+
+    const createDebugOverlays = (mapData: MapData): DebugOverlayController => {
+        const debugGroup = new THREE.Group();
+        debugGroup.name = 'DebugOverlays';
+        worldRenderer.group.add(debugGroup);
+
+        const layers: Record<DebugLayer, THREE.Group> = {
+            debug_roads: new THREE.Group(),
+            debug_lots: new THREE.Group(),
+            debug_buildings: new THREE.Group(),
+        };
+
+        Object.values(layers).forEach(layer => {
+            layer.visible = false;
+            debugGroup.add(layer);
+        });
+
+        const buildLineSegments = (points: { x: number; y: number }[], yOffset: number, material: THREE.LineBasicMaterial) => {
+            if (points.length < 2) return;
+            const verts: THREE.Vector3[] = [];
+            for (let i = 0; i < points.length; i++) {
+                const a = points[i];
+                const b = points[(i + 1) % points.length];
+                verts.push(new THREE.Vector3(a.x, yOffset, a.y));
+                verts.push(new THREE.Vector3(b.x, yOffset, b.y));
+            }
+            const geometry = new THREE.BufferGeometry().setFromPoints(verts);
+            return new THREE.LineSegments(geometry, material);
+        };
+
+        const roadMaterial = new THREE.LineBasicMaterial({ color: 0x3d6bff, linewidth: 2 });
+        const lotMaterial = new THREE.LineBasicMaterial({ color: 0xff9f43, linewidth: 1 });
+        const buildingMaterial = new THREE.LineBasicMaterial({ color: 0x53d3b2, linewidth: 1 });
+
+        mapData.road_segments.forEach(seg => {
+            const rect = [
+                { x: seg.x, y: seg.y },
+                { x: seg.x + seg.width, y: seg.y },
+                { x: seg.x + seg.width, y: seg.y + seg.height },
+                { x: seg.x, y: seg.y + seg.height },
+            ];
+            const line = buildLineSegments(rect, 2.0, roadMaterial);
+            if (line) layers.debug_roads.add(line);
+        });
+
+        mapData.lots.forEach(lot => {
+            const line = buildLineSegments(lot.points, 2.2, lotMaterial);
+            if (line) layers.debug_lots.add(line);
+        });
+
+        (mapData.buildings || []).forEach(building => {
+            const line = buildLineSegments(building.points, 2.4, buildingMaterial);
+            if (line) layers.debug_buildings.add(line);
+        });
+
+        return {
+            setVisible: (layer: DebugLayer, enabled: boolean) => {
+                const group = layers[layer];
+                if (group) group.visible = enabled;
+            }
+        };
+    };
+
     const state = {
         paused: false,
         timeSpeed: 60
     };
 
     // Overlay Menu
+    let debugOverlays: DebugOverlayController | null = null;
     const overlayMenu = new OverlayMenu({
         onChange: (overlay: OverlayType, enabled: boolean) => {
             console.log(`Overlay ${overlay}: ${enabled ? 'ON' : 'OFF'}`);
@@ -421,6 +490,7 @@ async function init() {
             if (overlay === 'zoning') {
                 applyLotMaterials();
             }
+
         }
     });
 
@@ -491,7 +561,14 @@ async function init() {
 
     // Debug folder
     const debugFolder = gui.addFolder('Debug');
-    const debugConfig = { showRoadGraph: false, showPedGraph: false, showSpawnPoints: false };
+    const debugConfig = {
+        showRoadGraph: false,
+        showPedGraph: false,
+        showSpawnPoints: false,
+        showDebugRoads: false,
+        showDebugLots: false,
+        showDebugBuildings: true,
+    };
     debugFolder.add(debugConfig, 'showRoadGraph').name('Show Road Graph').onChange((show: boolean) => {
         if (show && pathSystem) {
             const debugVis = pathSystem.getDebugVisualization();
@@ -514,6 +591,15 @@ async function init() {
     });
     debugFolder.add(debugConfig, 'showSpawnPoints').name('Show Spawn Points').onChange((show: boolean) => {
         spawnDebugGroup.visible = show;
+    });
+    debugFolder.add(debugConfig, 'showDebugRoads').name('Debug Roads').onChange((show: boolean) => {
+        if (debugOverlays) debugOverlays.setVisible('debug_roads', show);
+    });
+    debugFolder.add(debugConfig, 'showDebugLots').name('Debug Lots').onChange((show: boolean) => {
+        if (debugOverlays) debugOverlays.setVisible('debug_lots', show);
+    });
+    debugFolder.add(debugConfig, 'showDebugBuildings').name('Debug Buildings').onChange((show: boolean) => {
+        if (debugOverlays) debugOverlays.setVisible('debug_buildings', show);
     });
 
     // --- 4. Logic ---
@@ -593,6 +679,10 @@ async function init() {
 
         world.load(mapData);
         worldRenderer.render(world);
+        debugOverlays = createDebugOverlays(mapData);
+        debugOverlays.setVisible('debug_roads', debugConfig.showDebugRoads);
+        debugOverlays.setVisible('debug_lots', debugConfig.showDebugLots);
+        debugOverlays.setVisible('debug_buildings', debugConfig.showDebugBuildings);
         minimap.setWorld(world);
         worldBounds = {
             minX: world.bounds.minX + worldRenderer.group.position.x,
