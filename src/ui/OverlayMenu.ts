@@ -7,7 +7,8 @@ export type OverlayType =
     | 'pollution'
     | 'traffic_cars'
     | 'traffic_peds'
-    | 'traffic_combined';
+    | 'traffic_combined'
+    | 'wifi';
 
 export interface OverlayState {
     status: boolean;
@@ -19,6 +20,7 @@ export interface OverlayState {
     traffic_cars: boolean;
     traffic_peds: boolean;
     traffic_combined: boolean;
+    wifi: boolean;
 }
 
 export interface OverlayMenuConfig {
@@ -35,6 +37,7 @@ const OVERLAY_CONFIG: Record<OverlayType, { label: string; icon: string; descrip
     traffic_cars: { label: 'Traffic Cars', icon: '🚗', description: 'Vehicle traffic density' },
     traffic_peds: { label: 'Traffic Peds', icon: '🚶', description: 'Pedestrian traffic density' },
     traffic_combined: { label: 'Traffic All', icon: '🔥', description: 'Combined traffic density' },
+    wifi: { label: 'WiFi', icon: '📶', description: 'Wireless signal strength' },
 };
 
 export class OverlayMenu {
@@ -55,6 +58,7 @@ export class OverlayMenu {
             traffic_cars: false,
             traffic_peds: false,
             traffic_combined: false,
+            wifi: false,
         };
 
         this.container = document.createElement('div');

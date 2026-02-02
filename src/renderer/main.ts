@@ -29,6 +29,7 @@ import { SheriffSystem } from '../systems/SheriffSystem';
 import { EventLog, LogLocation } from '../ui/EventLog';
 import { SchoolBus } from '../entities/SchoolBus';
 import { TrafficOverlay } from './TrafficOverlay';
+import { WifiOverlay } from './WifiOverlay';
 
 async function init() {
     // --- 1. Systems Setup ---
@@ -46,6 +47,7 @@ async function init() {
     let sheriffSystem: SheriffSystem | null = null;
     let eventLog: EventLog;
     let trafficOverlay: TrafficOverlay | null = null;
+    let wifiOverlay: WifiOverlay | null = null;
 
     // --- 2. Graphics Setup ---
     const scene = new THREE.Scene();
@@ -512,6 +514,9 @@ async function init() {
             if (overlay === 'traffic_cars' || overlay === 'traffic_peds' || overlay === 'traffic_combined') {
                 trafficOverlay?.setVisible(overlay, enabled);
             }
+            if (overlay === 'wifi') {
+                wifiOverlay?.setVisible(enabled);
+            }
 
         }
     });
@@ -772,6 +777,8 @@ async function init() {
         trafficOverlay.setVisible('traffic_cars', overlayMenu.state.traffic_cars);
         trafficOverlay.setVisible('traffic_peds', overlayMenu.state.traffic_peds);
         trafficOverlay.setVisible('traffic_combined', overlayMenu.state.traffic_combined);
+        wifiOverlay = new WifiOverlay({ group: worldRenderer.group, bounds: world.bounds });
+        wifiOverlay.setVisible(overlayMenu.state.wifi);
         worldBounds = {
             minX: world.bounds.minX + worldRenderer.group.position.x,
             maxX: world.bounds.maxX + worldRenderer.group.position.x,
