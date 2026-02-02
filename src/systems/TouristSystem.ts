@@ -289,6 +289,13 @@ export class TouristSystem {
                 streetId: spot.id
             };
         }
+        const curbside = this.pathSystem.getCurbsidePointNearRoad({ x: target.x, y: target.z });
+        if (curbside) {
+            return {
+                point: new THREE.Vector3(curbside.point.x, 1, curbside.point.y),
+                rotation: curbside.rotation
+            };
+        }
         const nearest = this.pathSystem.getNearestRoadPoint(target.x, target.z);
         return { point: new THREE.Vector3(nearest.x, 1, nearest.y) };
     }

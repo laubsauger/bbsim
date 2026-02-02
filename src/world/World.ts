@@ -74,7 +74,21 @@ export class World {
             };
             this.width = vb.width;
             this.height = vb.height;
-            return; // Skip dynamic calculation
+            this.width = vb.width;
+            this.height = vb.height;
+
+            // Calculate tight bounds for texture mapping even if using ViewBox for world bounds
+            // because the texture image might be cropped to the town content.
+            let tMinX = Infinity, tMaxX = -Infinity, tMinY = Infinity, tMaxY = -Infinity;
+            this.roads.forEach(r => {
+                if (r.x < tMinX) tMinX = r.x;
+                if (r.x + r.width > tMaxX) tMaxX = r.x + r.width;
+                if (r.y < tMinY) tMinY = r.y;
+                if (r.y + r.height > tMaxY) tMaxY = r.y + r.height;
+            });
+            this.mapTextureBounds = { minX: tMinX, maxX: tMaxX, minY: tMinY, maxY: tMaxY };
+
+            return; // Skip dynamic calculation of main bounds
         }
 
         // Calculate bounds dynamically as fallback
@@ -92,6 +106,9 @@ export class World {
             updateBounds(r.x + r.width, r.y + r.height);
         });
 
+        // Store the tight bounds of the road network for texture mapping
+        this.mapTextureBounds = { minX, maxX, minY, maxY };
+
         this.lots.forEach(l => {
             l.points.forEach(p => updateBounds(p.x, p.y));
         });
@@ -108,6 +125,7 @@ export class World {
     }
 
     bounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+    mapTextureBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
 
     // Helper to find lot by ID
     getLot(id: number) {

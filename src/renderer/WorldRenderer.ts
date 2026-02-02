@@ -143,9 +143,9 @@ export class WorldRenderer {
 
         // Calculate minimal bounds (tight fit) for map texture projection
         // This MUST match the bounds used for the map texture itself
-        // Use the World bounds (which are now ViewBox-accurate) for texture projection.
-        // This ensures the texture (which covers the whole ViewBox) maps 1:1.
-        const mapBounds = { ...world.bounds };
+        // Use the World bounds for texture projection (ViewBox)
+        // This ensures the texture (covering the whole ViewBox) maps 1:1.
+        const mapBounds = world.bounds;
 
         this.renderRoads(world.roads, mapBounds);
         this.renderLots(world.lots, mapBounds);
@@ -463,10 +463,13 @@ export class WorldRenderer {
             const y = pos.getY(i);
 
             // Geometry is rotated -90 X later.
-            // Local X -> World X relative to center
-            // Local Y -> World Z relative to center
+            // Local X (x) -> World X
+            // Local Y (y) -> -World Z (because of rotation)
+            // Local Z (z) -> World Y (Height)
+            // World Position = Center + Local rotated
+            // Wz = cy - y
             const worldX = cx + x;
-            const worldZ = cy + y;
+            const worldZ = cy - y;
 
             // Map U: (worldX - minX) / width
             // Map V: 1 - (worldZ - minY) / height (Flipped Y)

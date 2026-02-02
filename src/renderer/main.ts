@@ -28,6 +28,7 @@ import { SchoolBusSystem } from '../systems/SchoolBusSystem';
 import { SheriffSystem } from '../systems/SheriffSystem';
 import { EventLog, LogLocation } from '../ui/EventLog';
 import { SchoolBus } from '../entities/SchoolBus';
+import { TrafficOverlay } from './TrafficOverlay';
 
 async function init() {
     // --- 1. Systems Setup ---
@@ -44,6 +45,7 @@ async function init() {
     let schoolBusSystem: SchoolBusSystem | null = null;
     let sheriffSystem: SheriffSystem | null = null;
     let eventLog: EventLog;
+    let trafficOverlay: TrafficOverlay | null = null;
 
     // --- 2. Graphics Setup ---
     const scene = new THREE.Scene();
@@ -507,6 +509,9 @@ async function init() {
             if (overlay === 'zoning') {
                 applyLotMaterials();
             }
+            if (overlay === 'traffic_cars' || overlay === 'traffic_peds' || overlay === 'traffic_combined') {
+                trafficOverlay?.setVisible(overlay, enabled);
+            }
 
         }
     });
@@ -586,13 +591,17 @@ async function init() {
     const debugConfig = {
         showRoadGraph: false,
         showPedGraph: false,
-        showSpawnPoints: false,
         showDebugRoads: false,
         showDebugLots: false,
         showDebugBuildings: true,
         showMapTexture: false,
         renderBuildings: true, // Keep meshes by default
-        projectOnBuildings: false
+        projectOnBuildings: false,
+        mapOffsetX: 0.00850,
+        mapOffsetY: 0.01909,
+        mapScale: 1.3071,
+        mapScaleY: 1.5027,
+        mapRotation: 0,
     };
     debugFolder.add(debugConfig, 'showRoadGraph').name('Show Road Graph').onChange((show: boolean) => {
         if (show && pathSystem) {
@@ -614,9 +623,7 @@ async function init() {
             console.log('[Debug] Pedestrian graph visualization disabled');
         }
     });
-    debugFolder.add(debugConfig, 'showSpawnPoints').name('Show Spawn Points').onChange((show: boolean) => {
-        spawnDebugGroup.visible = show;
-    });
+
     debugFolder.add(debugConfig, 'showDebugRoads').name('Debug Roads').onChange((show: boolean) => {
         if (debugOverlays) debugOverlays.setVisible('debug_roads', show);
     });
@@ -629,21 +636,42 @@ async function init() {
     debugFolder.add(debugConfig, 'renderBuildings').name('Render Meshes').onChange((show: boolean) => {
         worldRenderer.setBuildingsVisible(show);
     });
-    debugFolder.add(debugConfig, 'showMapTexture').name('Show Map Texture').onChange((show: boolean) => {
+    debugFolder.add(debugConfig, 'showMapTexture').name('Show Map Texture').onChange(() => {
         if (mapTexture) {
-            applyMapTextureToMeshes(show);
+            applyMapTextureToMeshes();
         }
     });
 
     debugFolder.add(debugConfig, 'projectOnBuildings').name('Texture on Buildings').onChange(() => {
-        // Re-apply current state to respect new flag
-        if (mapTexture && debugConfig.showMapTexture) {
-            applyMapTextureToMeshes(true);
-        } else if (mapTexture && !debugConfig.showMapTexture) {
-            // If disabled, just ensure defaults are restored. 
-            // Although if texture is OFF, this flag doesn't matter much unless we just toggled it OFF.
-            // But re-running clear ensures it.
-            applyMapTextureToMeshes(false);
+        if (mapTexture) {
+            applyMapTextureToMeshes();
+        }
+    });
+
+    // Texture alignment controls
+    debugFolder.add(debugConfig, 'mapOffsetX', -2.0, 2.0, 0.0001).name('Map Offset X').onChange(() => {
+        if (mapTexture) {
+            applyMapTextureToMeshes();
+        }
+    });
+    debugFolder.add(debugConfig, 'mapOffsetY', -2.0, 2.0, 0.0001).name('Map Offset Y').onChange(() => {
+        if (mapTexture) {
+            applyMapTextureToMeshes();
+        }
+    });
+    debugFolder.add(debugConfig, 'mapScale', 0.1, 5.0, 0.0001).name('Map Scale X').onChange(() => {
+        if (mapTexture) {
+            applyMapTextureToMeshes();
+        }
+    });
+    debugFolder.add(debugConfig, 'mapScaleY', 0.1, 5.0, 0.0001).name('Map Scale Y').onChange(() => {
+        if (mapTexture) {
+            applyMapTextureToMeshes();
+        }
+    });
+    debugFolder.add(debugConfig, 'mapRotation', -Math.PI, Math.PI, 0.01).name('Map Rotation').onChange(() => {
+        if (mapTexture) {
+            applyMapTextureToMeshes();
         }
     });
 
@@ -740,6 +768,10 @@ async function init() {
         debugOverlays.setVisible('debug_lots', debugConfig.showDebugLots);
         debugOverlays.setVisible('debug_buildings', debugConfig.showDebugBuildings);
         minimap.setWorld(world);
+        trafficOverlay = new TrafficOverlay({ group: worldRenderer.group, bounds: world.bounds });
+        trafficOverlay.setVisible('traffic_cars', overlayMenu.state.traffic_cars);
+        trafficOverlay.setVisible('traffic_peds', overlayMenu.state.traffic_peds);
+        trafficOverlay.setVisible('traffic_combined', overlayMenu.state.traffic_combined);
         worldBounds = {
             minX: world.bounds.minX + worldRenderer.group.position.x,
             maxX: world.bounds.maxX + worldRenderer.group.position.x,
@@ -899,6 +931,9 @@ async function init() {
                 pathSystem.updateTraffic(agents, delta * timeScale);
                 agents.forEach(a => a.update(delta * timeScale));
                 pathSystem.enforcePedestrianBounds(agents);
+                if (trafficOverlay) {
+                    trafficOverlay.update(agents, delta * timeScale);
+                }
 
                 if (touristSystem) {
                     touristSystem.update(timeSystem.time.totalSeconds, delta * timeScale, timeSystem.time.hour);
@@ -999,7 +1034,7 @@ async function init() {
         mesh.position.copy(position);
         mesh.position.y = 6;
         spawnDebugGroup.add(mesh);
-        spawnDebugGroup.visible = debugConfig.showSpawnPoints;
+        // spawnDebugGroup.visible = debugConfig.showSpawnPoints; // Removed
     }
 
     function getShoulderPose(target: THREE.Object3D): { pos: THREE.Vector3; target: THREE.Vector3 } {
@@ -1169,48 +1204,61 @@ async function init() {
         return position;
     }
 
-    function applyMapTextureToMeshes(enabled: boolean) {
+    function applyMapTextureToMeshes(ignored?: any) {
         if (!mapTexture) return;
 
         worldRenderer.group.traverse((child) => {
             if (child instanceof THREE.Mesh) {
                 const type = child.userData.type;
-                if (type === 'road' || type === 'lot' || type === 'building') {
-                    // Check if we should skip buildings
-                    if (type === 'building' && enabled && !debugConfig.projectOnBuildings) {
-                        // If enabled is TRUE globally, but building projection is FALSE, 
-                        // we should act as if enabled is FALSE for this building.
-                        // So we fall through to the 'else' block logic basically, OR explicitly restore.
-                        if (child.userData.originalMaterial) {
-                            child.material = child.userData.originalMaterial;
-                        }
-                        return;
+
+                // Determine enablement per type based on config
+                let shouldUseTexture = false;
+
+                if (type === 'road' || type === 'lot') {
+                    shouldUseTexture = debugConfig.showMapTexture;
+                } else if (type === 'building') {
+                    shouldUseTexture = debugConfig.projectOnBuildings;
+                }
+
+                if (shouldUseTexture) {
+                    // Store original material if not already stored
+                    if (!child.userData.originalMaterial) {
+                        child.userData.originalMaterial = child.material;
                     }
 
-                    if (enabled) {
-                        // Store original material if not already stored
-                        if (!child.userData.originalMaterial) {
-                            child.userData.originalMaterial = child.material;
-                        }
+                    // Create a clone of the original material to apply the texture
+                    // distinct for each mesh to avoid shared state pollution
+                    const newMat = child.userData.originalMaterial.clone();
+                    newMat.map = mapTexture;
 
-                        // Create a clone of the original material to apply the texture
-                        // distinct for each mesh to avoid shared state pollution
-                        const newMat = child.userData.originalMaterial.clone();
-                        newMat.map = mapTexture;
-                        newMat.color.setHex(0xFFFFFF); // White to show texture colors accurately
-                        newMat.needsUpdate = true;
+                    // Apply Debug Offsets
+                    if (newMat.map) {
+                        // Center transformations to avoid pivot variance between meshes 
+                        newMat.map.center.set(0.5, 0.5);
+                        newMat.map.offset.set(debugConfig.mapOffsetX, debugConfig.mapOffsetY);
+                        newMat.map.repeat.set(debugConfig.mapScale, debugConfig.mapScaleY);
+                        newMat.map.rotation = debugConfig.mapRotation;
 
-                        child.material = newMat;
-                    } else {
-                        // Restore original material
-                        if (child.userData.originalMaterial) {
-                            child.material = child.userData.originalMaterial;
-                        }
+                        // Ensure wrapping is explicit so offsets work indefinitely
+                        newMat.map.wrapS = THREE.RepeatWrapping;
+                        newMat.map.wrapT = THREE.RepeatWrapping;
+                    }
+
+                    newMat.color.setHex(0xFFFFFF); // White to show texture colors accurately
+                    newMat.needsUpdate = true;
+
+                    child.material = newMat;
+                } else {
+                    // Restore original material
+                    if (child.userData.originalMaterial) {
+                        child.material = child.userData.originalMaterial;
                     }
                 }
             }
         });
     }
+
+
 }
 
 init();

@@ -130,6 +130,32 @@ export class PathfindingSystem {
         return point;
     }
 
+    getCurbsidePointNearRoad(point: Point): { point: Point; rotation: number } | null {
+        const road = this.getRoadAt(point.x, point.y) || this.getNearestRoadSegment(point.x, point.y);
+        if (!road) return null;
+        const curbInset = Math.max(2, Math.min(6, road.type === 'vertical' ? road.width * 0.15 : road.height * 0.15));
+
+        if (road.type === 'vertical') {
+            const centerX = road.x + road.width / 2;
+            const left = road.x + curbInset;
+            const right = road.x + road.width - curbInset;
+            const useLeft = point.x <= centerX;
+            let x = useLeft ? left : right;
+            let y = Math.max(road.y + 10, Math.min(point.y, road.y + road.height - 10));
+            const adjusted = this.adjustPointAwayFromIntersection(road, { x, y }, 14);
+            return { point: adjusted, rotation: 0 };
+        }
+
+        const centerY = road.y + road.height / 2;
+        const top = road.y + curbInset;
+        const bottom = road.y + road.height - curbInset;
+        const useTop = point.y <= centerY;
+        let y = useTop ? top : bottom;
+        let x = Math.max(road.x + 10, Math.min(point.x, road.x + road.width - 10));
+        const adjusted = this.adjustPointAwayFromIntersection(road, { x, y }, 14);
+        return { point: adjusted, rotation: Math.PI / 2 };
+    }
+
     getRandomPointOnRoad(): THREE.Vector3 {
         if (this.roads.length === 0) return new THREE.Vector3();
         const road = this.roads[Math.floor(Math.random() * this.roads.length)];
@@ -459,6 +485,7 @@ export class PathfindingSystem {
 
             // Initialize parking spots array
             lot.parkingSpots = [];
+            const intersectionClear = 16;
             let hasCustomParking = false;
 
             if (lot.id === 618) {
@@ -521,7 +548,9 @@ export class PathfindingSystem {
 
                     // If edge is short OR it's practically a square
                     if (edge.length < maxLength * 0.8 || Math.abs(edge.length - maxLength) < 5) {
-                        lot.gatePositions?.push(edge.midpoint);
+                        if (!this.isNearIntersection(edge.midpoint.x, edge.midpoint.y, intersectionClear)) {
+                            lot.gatePositions?.push(edge.midpoint);
+                        }
 
                         // Compute parking spots along road-facing edge
                         const dx = cx - edge.midpoint.x;
@@ -536,21 +565,26 @@ export class PathfindingSystem {
 
                             // Create 2 parking spots side by side
                             for (let i = -1; i <= 1; i += 2) {
-                                lot.parkingSpots!.push({
-                                    x: edge.midpoint.x + (dx / len) * 20 + perpX * spacing * i,
-                                    y: edge.midpoint.y + (dy / len) * 20 + perpY * spacing * i,
-                                    rotation,
-                                    occupiedBy: null,
-                                });
+                                const px = edge.midpoint.x + (dx / len) * 20 + perpX * spacing * i;
+                                const py = edge.midpoint.y + (dy / len) * 20 + perpY * spacing * i;
+                                if (!this.isNearIntersection(px, py, intersectionClear)) {
+                                    lot.parkingSpots!.push({
+                                        x: px,
+                                        y: py,
+                                        rotation,
+                                        occupiedBy: null,
+                                    });
+                                }
                             }
 
                             // Legacy single spot for backwards compatibility
                             if (!lot.parkingSpot) {
-                                lot.parkingSpot = {
-                                    x: edge.midpoint.x + (dx / len) * 20,
-                                    y: edge.midpoint.y + (dy / len) * 20
-                                };
-                                lot.parkingRotation = rotation;
+                                const px = edge.midpoint.x + (dx / len) * 20;
+                                const py = edge.midpoint.y + (dy / len) * 20;
+                                if (!this.isNearIntersection(px, py, intersectionClear)) {
+                                    lot.parkingSpot = { x: px, y: py };
+                                    lot.parkingRotation = rotation;
+                                }
                             }
                         }
                     }
@@ -578,20 +612,25 @@ export class PathfindingSystem {
                     const spacing = 10;
 
                     for (let i = -1; i <= 1; i += 2) {
-                        lot.parkingSpots!.push({
-                            x: cx + (dx / len) * 10 + perpX * spacing * i,
-                            y: cy + (dy / len) * 10 + perpY * spacing * i,
-                            rotation,
-                            occupiedBy: null,
-                        });
+                        const px = cx + (dx / len) * 10 + perpX * spacing * i;
+                        const py = cy + (dy / len) * 10 + perpY * spacing * i;
+                        if (!this.isNearIntersection(px, py, intersectionClear)) {
+                            lot.parkingSpots!.push({
+                                x: px,
+                                y: py,
+                                rotation,
+                                occupiedBy: null,
+                            });
+                        }
                     }
 
                     // Legacy single spot
-                    lot.parkingSpot = {
-                        x: cx + (dx / len) * 10,
-                        y: cy + (dy / len) * 10
-                    };
-                    lot.parkingRotation = rotation;
+                    const px = cx + (dx / len) * 10;
+                    const py = cy + (dy / len) * 10;
+                    if (!this.isNearIntersection(px, py, intersectionClear)) {
+                        lot.parkingSpot = { x: px, y: py };
+                        lot.parkingRotation = rotation;
+                    }
                 }
             }
         });

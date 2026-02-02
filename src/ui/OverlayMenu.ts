@@ -5,7 +5,9 @@ export type OverlayType =
     | 'prices'
     | 'noise'
     | 'pollution'
-    | 'traffic';
+    | 'traffic_cars'
+    | 'traffic_peds'
+    | 'traffic_combined';
 
 export interface OverlayState {
     status: boolean;
@@ -14,7 +16,9 @@ export interface OverlayState {
     prices: boolean;
     noise: boolean;
     pollution: boolean;
-    traffic: boolean;
+    traffic_cars: boolean;
+    traffic_peds: boolean;
+    traffic_combined: boolean;
 }
 
 export interface OverlayMenuConfig {
@@ -28,7 +32,9 @@ const OVERLAY_CONFIG: Record<OverlayType, { label: string; icon: string; descrip
     prices: { label: 'Prices', icon: '💰', description: 'Property values' },
     noise: { label: 'Noise', icon: '🔊', description: 'Noise pollution levels' },
     pollution: { label: 'Pollution', icon: '☁️', description: 'Air quality' },
-    traffic: { label: 'Traffic', icon: '🚗', description: 'Traffic density' },
+    traffic_cars: { label: 'Traffic Cars', icon: '🚗', description: 'Vehicle traffic density' },
+    traffic_peds: { label: 'Traffic Peds', icon: '🚶', description: 'Pedestrian traffic density' },
+    traffic_combined: { label: 'Traffic All', icon: '🔥', description: 'Combined traffic density' },
 };
 
 export class OverlayMenu {
@@ -46,7 +52,9 @@ export class OverlayMenu {
             prices: false,
             noise: false,
             pollution: false,
-            traffic: false,
+            traffic_cars: false,
+            traffic_peds: false,
+            traffic_combined: false,
         };
 
         this.container = document.createElement('div');
