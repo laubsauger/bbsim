@@ -8,7 +8,7 @@ const LNG = -115.7339;
 
 // World center for calculating light positions
 const WORLD_CENTER = new THREE.Vector3(1000, 0, 1000);
-const LIGHT_DISTANCE = 4000;
+const LIGHT_DISTANCE = 15000; // Far enough that sun/moon are well above the city
 
 // Color palettes for different times of day
 const SKY_COLORS = {
@@ -43,12 +43,14 @@ export class DayNightCycle {
     private sunMesh: THREE.Mesh | null = null;
     private moonMesh: THREE.Mesh | null = null;
 
-    // Street lamps
-    private streetLamps: THREE.PointLight[] = [];
+    // Street lamps (SpotLights for downward cone)
+    private streetLamps: THREE.SpotLight[] = [];
     private lampMeshes: THREE.Mesh[] = [];
     private lampGroup: THREE.Group;
+    private bulbMaterial: THREE.MeshStandardMaterial | null = null;
 
     public enabled: boolean = true;
+    public isNight: boolean = false;
 
     // Custom time override
     public useCustomTime: boolean = false;
@@ -80,71 +82,179 @@ export class DayNightCycle {
         this.moonLight.shadow.bias = -0.0005;
         scene.add(this.moonLight);
 
-        // Create visible sun mesh
-        const sunGeo = new THREE.SphereGeometry(80, 16, 16);
-        const sunMat = new THREE.MeshBasicMaterial({ color: 0xffdd66 });
+        // Create visible sun mesh (large and distant for proper sky effect)
+        const sunGeo = new THREE.SphereGeometry(400, 32, 32);
+        const sunMat = new THREE.MeshBasicMaterial({ color: 0xffdd66, fog: false });
         this.sunMesh = new THREE.Mesh(sunGeo, sunMat);
         this.sunMesh.name = 'Sun';
+        this.sunMesh.frustumCulled = false; // Always render, even when far
         scene.add(this.sunMesh);
 
-        // Create visible moon mesh
-        const moonGeo = new THREE.SphereGeometry(50, 16, 16);
-        const moonMat = new THREE.MeshBasicMaterial({ color: 0xccccdd });
+        // Create visible moon mesh (slightly smaller than sun)
+        const moonGeo = new THREE.SphereGeometry(250, 32, 32);
+        const moonMat = new THREE.MeshBasicMaterial({ color: 0xeeeeff, fog: false });
         this.moonMesh = new THREE.Mesh(moonGeo, moonMat);
         this.moonMesh.name = 'Moon';
+        this.moonMesh.frustumCulled = false; // Always render, even when far
         scene.add(this.moonMesh);
 
-        // Street lamp group
+        // Street lamp group - will be parented to world group later
         this.lampGroup = new THREE.Group();
         this.lampGroup.name = 'StreetLamps';
-        scene.add(this.lampGroup);
+        // Don't add to scene here - will be added to world group in createStreetLamps
     }
 
     /**
-     * Create sodium street lamps at intersection positions
+     * Create sodium street lamps at intersection corners
+     * @param intersections - Array of intersection center positions
+     * @param parentGroup - The group to add lamps to (usually worldRenderer.group)
      */
-    createStreetLamps(intersections: { x: number; y: number }[]) {
-        // Clear existing lamps
-        this.streetLamps.forEach(lamp => this.lampGroup.remove(lamp));
-        this.lampMeshes.forEach(mesh => this.lampGroup.remove(mesh));
+    createStreetLamps(intersections: { x: number; y: number }[], parentGroup: THREE.Group) {
+        // Remove from previous parent if any
+        if (this.lampGroup.parent) {
+            this.lampGroup.parent.remove(this.lampGroup);
+        }
+
+        // Add to the correct parent (world group)
+        parentGroup.add(this.lampGroup);
+
+        // Clear existing content
+        while (this.lampGroup.children.length > 0) {
+            this.lampGroup.remove(this.lampGroup.children[0]);
+        }
         this.streetLamps = [];
         this.lampMeshes = [];
 
+        // Filter to every other intersection, place on corners
+        const lampPositions: { x: number; y: number; corner: number }[] = [];
+        const cornerOffset = 35; // Moved further out from center (was 20)
+
+        let lampCounter = 0;
+        intersections.forEach((center, i) => {
+            if (i % 4 !== 0) return;
+
+            // Rotate which corner based on lamp counter for variety
+            const corner = lampCounter % 4;
+            const dx = (corner === 0 || corner === 3) ? -cornerOffset : cornerOffset;
+            const dy = (corner === 0 || corner === 1) ? -cornerOffset : cornerOffset;
+
+            lampPositions.push({
+                x: center.x + dx,
+                y: center.y + dy,
+                corner
+            });
+            lampCounter++;
+        });
+
+        const count = lampPositions.length;
+        if (count === 0) return;
+
         // Sodium vapor color (warm orange-yellow)
         const sodiumColor = 0xffa033;
-        const lampHeight = 25;
-        const poleRadius = 1.5;
+        const poleHeight = 35;
+        const armLength = 8;
+        const armHeight = poleHeight - 2;
+        const fixtureHeight = armHeight - 3;
+        const poleRadius = 1.2;
 
-        intersections.forEach((pos, i) => {
-            // Only place lamp at every other intersection to avoid overcrowding
-            if (i % 2 !== 0) return;
+        // Create shared geometries
+        const poleGeo = new THREE.CylinderGeometry(poleRadius, poleRadius * 1.3, poleHeight, 8);
+        const armGeo = new THREE.CylinderGeometry(poleRadius * 0.6, poleRadius * 0.6, armLength, 6);
+        const fixtureGeo = new THREE.ConeGeometry(2.5, 4, 8); // Smaller cone
+        const bulbGeo = new THREE.SphereGeometry(1.5, 8, 8); // Smaller bulb
 
-            // Create pole mesh
-            const poleGeo = new THREE.CylinderGeometry(poleRadius, poleRadius * 1.2, lampHeight, 8);
-            const poleMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.6, roughness: 0.4 });
-            const pole = new THREE.Mesh(poleGeo, poleMat);
-            pole.position.set(pos.x, lampHeight / 2, pos.y);
-            pole.castShadow = true;
-            this.lampGroup.add(pole);
-            this.lampMeshes.push(pole);
+        // Create shared materials
+        const poleMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.7, roughness: 0.3 });
+        const fixtureMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5, roughness: 0.5 });
+        // Use emissive material for bulb so it can be turned on/off
+        const bulbMat = new THREE.MeshStandardMaterial({
+            color: 0x333333, // Dark when off
+            emissive: sodiumColor,
+            emissiveIntensity: 0 // Off by default, updated in update()
+        });
+        this.bulbMaterial = bulbMat; // Store for intensity control
 
-            // Create lamp head (small glowing sphere)
-            const headGeo = new THREE.SphereGeometry(3, 8, 8);
-            const headMat = new THREE.MeshBasicMaterial({ color: sodiumColor });
-            const head = new THREE.Mesh(headGeo, headMat);
-            head.position.set(pos.x, lampHeight + 2, pos.y);
-            this.lampGroup.add(head);
-            this.lampMeshes.push(head);
+        // Create instanced meshes for poles
+        const poleInstanced = new THREE.InstancedMesh(poleGeo, poleMat, count);
+        poleInstanced.castShadow = true;
+        poleInstanced.receiveShadow = false;
 
-            // Create point light
-            const light = new THREE.PointLight(sodiumColor, 0, 120, 2);
-            light.position.set(pos.x, lampHeight + 2, pos.y);
-            light.castShadow = false; // Too many shadow casters would kill performance
+        // Create instanced meshes for arms (horizontal)
+        const armInstanced = new THREE.InstancedMesh(armGeo, poleMat, count);
+        armInstanced.castShadow = true;
+        armInstanced.receiveShadow = false;
+
+        // Create instanced meshes for fixtures
+        const fixtureInstanced = new THREE.InstancedMesh(fixtureGeo, fixtureMat, count);
+        fixtureInstanced.castShadow = false;
+        fixtureInstanced.receiveShadow = false;
+
+        // Create instanced meshes for glowing bulbs
+        const bulbInstanced = new THREE.InstancedMesh(bulbGeo, bulbMat, count);
+        bulbInstanced.castShadow = false;
+        bulbInstanced.receiveShadow = false;
+
+        // Dummy object for matrix calculations
+        const dummy = new THREE.Object3D();
+
+        // Set instance matrices and create spot lights
+        lampPositions.forEach((pos, i) => {
+            // Direction the arm points (toward intersection center)
+            const armAngle = (pos.corner * Math.PI / 2) + Math.PI / 4;
+            const armDx = Math.sin(armAngle) * (armLength / 2);
+            const armDy = Math.cos(armAngle) * (armLength / 2);
+
+            // Pole position (vertical)
+            dummy.position.set(pos.x, poleHeight / 2, pos.y);
+            dummy.rotation.set(0, 0, 0);
+            dummy.scale.set(1, 1, 1);
+            dummy.updateMatrix();
+            poleInstanced.setMatrixAt(i, dummy.matrix);
+
+            // Arm position (horizontal, pointing inward)
+            dummy.position.set(pos.x + armDx, armHeight, pos.y + armDy);
+            dummy.rotation.set(0, 0, Math.PI / 2);
+            dummy.rotation.y = -armAngle;
+            dummy.updateMatrix();
+            armInstanced.setMatrixAt(i, dummy.matrix);
+
+            // Fixture position (at end of arm, pointing down)
+            const fixX = pos.x + armDx * 2;
+            const fixZ = pos.y + armDy * 2;
+            dummy.position.set(fixX, fixtureHeight, fixZ);
+            dummy.rotation.set(Math.PI, 0, 0); // Cone pointing down
+            dummy.updateMatrix();
+            fixtureInstanced.setMatrixAt(i, dummy.matrix);
+
+            // Bulb position (inside fixture)
+            dummy.position.set(fixX, fixtureHeight - 4, fixZ);
+            dummy.rotation.set(0, 0, 0);
+            dummy.updateMatrix();
+            bulbInstanced.setMatrixAt(i, dummy.matrix);
+
+            // Create spot light pointing down from fixture
+            const light = new THREE.SpotLight(sodiumColor, 0, 60, Math.PI / 3, 0.6, 1.5);
+            light.position.set(fixX, fixtureHeight - 2, fixZ);
+            light.target.position.set(fixX, 0, fixZ);
+            light.castShadow = false;
             this.lampGroup.add(light);
+            this.lampGroup.add(light.target);
             this.streetLamps.push(light);
         });
 
-        console.log(`[DayNightCycle] Created ${this.streetLamps.length} street lamps`);
+        // Update instance matrices
+        poleInstanced.instanceMatrix.needsUpdate = true;
+        armInstanced.instanceMatrix.needsUpdate = true;
+        fixtureInstanced.instanceMatrix.needsUpdate = true;
+        bulbInstanced.instanceMatrix.needsUpdate = true;
+
+        // Add instanced meshes to group
+        this.lampGroup.add(poleInstanced);
+        this.lampGroup.add(armInstanced);
+        this.lampGroup.add(fixtureInstanced);
+        this.lampGroup.add(bulbInstanced);
+
+        console.log(`[DayNightCycle] Created ${count} street lamps at intersection corners`);
     }
 
     update(timeSystem: TimeSystem) {
@@ -177,6 +287,7 @@ export class DayNightCycle {
         this.sunLight.position.copy(sunPos).add(WORLD_CENTER);
         this.sunLight.target.position.copy(WORLD_CENTER);
         this.sunLight.target.updateMatrixWorld();
+        this.sunLight.shadow.camera.updateProjectionMatrix();
 
         // Update moon light position
         this.moonLight.position.copy(moonPos).add(WORLD_CENTER);
@@ -198,6 +309,9 @@ export class DayNightCycle {
         // -0.3 = deep night, -0.1 = twilight start, 0 = horizon, 0.2 = golden hour end, 0.5+ = full day
         const sunAlt = sun.altitude;
         const moonAlt = moon.altitude;
+
+        // Update public isNight flag (sun below horizon with buffer)
+        this.isNight = sunAlt < -0.05;
 
         // Normalize sun altitude to useful ranges
         // dayFactor: 0 = night, 1 = full day (smoothly transitions)
@@ -284,7 +398,7 @@ export class DayNightCycle {
 
         // --- STREET LAMPS ---
         // Turn on at dusk/night, off during day
-        const lampIntensity = (1 - dayFactor) * 1.5; // 0 during day, 1.5 at night
+        const lampIntensity = (1 - dayFactor) * 3.0; // 0 during day, 3.0 at night for good illumination
         this.streetLamps.forEach(lamp => {
             lamp.intensity = lampIntensity;
         });

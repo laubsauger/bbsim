@@ -149,6 +149,7 @@ async function init() {
     sunLight.shadow.normalBias = 0.02;
 
     scene.add(sunLight);
+    scene.add(sunLight.target); // Target must be in scene for shadow direction to update
 
     // Secondary fill light from opposite side (softer, no shadows)
     const fillLight = new THREE.DirectionalLight(0xE8F0FF, 0.4); // Cool fill
@@ -616,7 +617,7 @@ async function init() {
     });
 
     const simFolder = gui.addFolder('Simulation');
-    const simConfig = { residentCount: 250, touristCount: 30 };
+    const simConfig = { residentCount: 200, touristCount: 30 };
     simFolder.add(simConfig, 'residentCount', 0, 500).name('Residents').onFinishChange(spawnPopulation);
     simFolder.add(simConfig, 'touristCount', 0, 100).name('Tourists').onFinishChange(spawnPopulation);
 
@@ -631,6 +632,7 @@ async function init() {
         showParkingLegs: false,
         showMapTexture: true,
         renderBuildings: true, // Keep meshes by default
+        showLotBorders: true, // Show lot border lines by default
         projectOnBuildings: false,
         mapOffsetX: 0.00870,
         mapOffsetY: 0.02090,
@@ -677,6 +679,9 @@ async function init() {
     });
     debugFolder.add(debugConfig, 'renderBuildings').name('Render Meshes').onChange((show: boolean) => {
         worldRenderer.setBuildingsVisible(show);
+    });
+    debugFolder.add(debugConfig, 'showLotBorders').name('Lot Borders').onChange((show: boolean) => {
+        worldRenderer.setLotBordersVisible(show);
     });
     debugFolder.add(debugConfig, 'showMapTexture').name('Show Map Texture').onChange(() => {
         if (mapTexture) {
@@ -797,7 +802,7 @@ async function init() {
 
         // Load Map Texture for Projection
         const textureLoader = new THREE.TextureLoader();
-        textureLoader.load('docs/map/image_BB_map.png', (tex) => {
+        textureLoader.load('docs/map/image_BB_map.jpg', (tex) => {
             tex.colorSpace = THREE.SRGBColorSpace;
             mapTexture = tex;
             // Apply texture immediately if it's loaded and enabled in config
@@ -830,9 +835,9 @@ async function init() {
         pathSystem = new PathfindingSystem(world.roads);
         pathSystem.computeAccessPoints(world.lots);
 
-        // Create street lamps at intersections
+        // Create street lamps at intersections (add to world group for correct coordinates)
         const intersectionCenters = pathSystem.getIntersectionCenters();
-        dayNightCycle.createStreetLamps(intersectionCenters);
+        dayNightCycle.createStreetLamps(intersectionCenters, worldRenderer.group);
 
         const centeredBounds = {
             minX: world.bounds.minX + worldRenderer.group.position.x,
@@ -974,6 +979,7 @@ async function init() {
 
             // Update day/night lighting based on game time
             dayNightCycle.update(timeSystem);
+            Vehicle.isNight = dayNightCycle.isNight;
 
             if (pathSystem) {
                 // Scale movement by Time Speed

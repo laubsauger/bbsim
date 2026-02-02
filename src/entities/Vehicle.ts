@@ -20,6 +20,14 @@ export class Vehicle extends Agent {
     passengerSeats: THREE.Mesh[] = [];
     speedModifier: number = 1;
 
+    // Vehicle visualization state
+    headlights: THREE.Mesh[] = [];
+    taillights: THREE.Mesh[] = [];
+    isBraking: boolean = false;
+
+    // Global night state
+    static isNight: boolean = false;
+
     constructor(config: AgentConfig, isTourist: boolean = false) {
         super({ ...config, speed: config.speed * 2 }); // Cars are faster
 
@@ -37,6 +45,8 @@ export class Vehicle extends Agent {
         const bodyWidth = 7 * VEHICLE_SCALE;
         const bodyHeight = 4 * VEHICLE_SCALE;
         const bodyLength = 14 * VEHICLE_SCALE;
+        const halfLength = bodyLength / 2;
+        const halfWidth = bodyWidth / 2;
 
         // Car body color based on owner type - consistent colors
         let bodyColor: number;
@@ -54,6 +64,46 @@ export class Vehicle extends Agent {
         bodyMesh.position.y = bodyHeight / 2;
         bodyMesh.castShadow = true;
         this.carGroup.add(bodyMesh);
+
+        // --- LIGHTS ---
+
+        // Headlights (Front is +Z based on seat setup)
+        const hlGeo = new THREE.BoxGeometry(1 * VEHICLE_SCALE, 1 * VEHICLE_SCALE, 0.5 * VEHICLE_SCALE);
+        const hlMat = new THREE.MeshStandardMaterial({
+            color: 0xffffcc,
+            emissive: 0xffffcc,
+            emissiveIntensity: 0 // Off by default
+        });
+
+        const hlLeft = new THREE.Mesh(hlGeo, hlMat.clone());
+        hlLeft.position.set(-halfWidth + 1.5, bodyHeight / 2, halfLength);
+        this.carGroup.add(hlLeft);
+        this.headlights.push(hlLeft);
+
+        const hlRight = new THREE.Mesh(hlGeo, hlMat.clone());
+        hlRight.position.set(halfWidth - 1.5, bodyHeight / 2, halfLength);
+        this.carGroup.add(hlRight);
+        this.headlights.push(hlRight);
+
+        // Taillights (Rear is -Z)
+        const tlGeo = new THREE.BoxGeometry(1 * VEHICLE_SCALE, 1 * VEHICLE_SCALE, 0.5 * VEHICLE_SCALE);
+        const tlMat = new THREE.MeshStandardMaterial({
+            color: 0x330000, // Dark red when off
+            emissive: 0xff0000,
+            emissiveIntensity: 0 // Off by default
+        });
+
+        const tlLeft = new THREE.Mesh(tlGeo, tlMat.clone());
+        tlLeft.position.set(-halfWidth + 1.5, bodyHeight / 2, -halfLength);
+        this.carGroup.add(tlLeft);
+        this.taillights.push(tlLeft);
+
+        const tlRight = new THREE.Mesh(tlGeo, tlMat.clone());
+        tlRight.position.set(halfWidth - 1.5, bodyHeight / 2, -halfLength);
+        this.carGroup.add(tlRight);
+        this.taillights.push(tlRight);
+
+
 
         // Seat positions (2 front, 2 back) - visible from above as dark cutouts
         const seatPositions = [
@@ -131,6 +181,7 @@ export class Vehicle extends Agent {
 
     setDriver(driver: Agent | null) {
         this.driver = driver;
+        this.updateLightState(); // Update lights when driver enters/leaves
         if (this.driverSeat) {
             this.driverSeat.visible = driver !== null;
         }
@@ -157,7 +208,44 @@ export class Vehicle extends Agent {
         }
     }
 
+    // Update light visibility/intensity based on state
+    updateLightState() {
+        const lightsOn = Vehicle.isNight && this.driver !== null; // Only on if driven at night
+
+        // Headlights
+        const hlIntensity = lightsOn ? 1.0 : 0.0;
+        this.headlights.forEach(hl => {
+            if (hl.material instanceof THREE.MeshStandardMaterial) {
+                hl.material.emissiveIntensity = hlIntensity;
+            }
+        });
+
+
+
+        // Taillights / Brakelights
+        // Braking logic: isBraking flag driven by update loop
+        // If braking: Bright red (2.0 intensity)
+        // If driving but not braking: Dim red (0.5 intensity)
+        // If lights off (day/nopark): Off (0 intensity)
+        let tlIntensity = 0;
+        if (lightsOn) {
+            tlIntensity = this.isBraking ? 4.0 : 0.5;
+        } else if (this.isBraking && this.driver !== null) {
+            // Even in daytime, brakelights show when braking (brighter than off)
+            tlIntensity = 2.0;
+        }
+
+        this.taillights.forEach(tl => {
+            if (tl.material instanceof THREE.MeshStandardMaterial) {
+                tl.material.emissiveIntensity = tlIntensity;
+            }
+        });
+    }
+
     update(delta: number) {
+        // Track braking state for visuals
+        const prevSpeed = this.currentSpeed;
+
         if (this.target) {
             // Track history periodically
             if (this.recentPath.length === 0 || this.position.distanceTo(this.recentPath[this.recentPath.length - 1]) > 5) {
@@ -173,6 +261,7 @@ export class Vehicle extends Agent {
             if (dist < 3) {
                 this.position.copy(this.target);
                 this.target = null;
+                // Braking logic happens here implicitly (speed reduction)
                 this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 2 * delta);
             } else {
                 // Calculate target rotation based on movement direction
@@ -191,6 +280,13 @@ export class Vehicle extends Agent {
             // No target - decelerate
             this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 3 * delta);
         }
+
+        // Determine isBraking: true if speed decreased or trying to stop
+        this.isBraking = this.currentSpeed < prevSpeed - 0.01; // Tiny threshold
+
+        // Update lights every frame (to catch braking changes and global day/night)
+        // Optimization: only if changed? But isNight is global.
+        this.updateLightState();
 
         // Always update mesh (including smooth rotation)
         this.updateMesh(delta);

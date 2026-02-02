@@ -94,6 +94,8 @@ export class ResidentScheduleSystem {
             if (resident.isInCar && resident.data.car &&
                 !resident.data.car.target && resident.data.car.path.length === 0 &&
                 schedule.destinationLot) {
+                // Snap car to proper roadside parking before driver exits
+                this.pathSystem.snapToRoadsideParking(resident.data.car);
                 resident.exitCar();
                 const point = this.getRandomPointInLot(schedule.destinationLot);
                 resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
@@ -562,6 +564,8 @@ export class ResidentScheduleSystem {
             resident.data.car.position.set(entry.x, 1, entry.y);
             resident.data.car.updateMesh();
             resident.data.car.carGroup.visible = true;
+            // Snap to proper roadside parking before leaving car
+            this.pathSystem.snapToRoadsideParking(resident.data.car);
             resident.data.car.setDriver(null);
         }
         resident.position.set(entry.x, 1, entry.y);

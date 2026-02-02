@@ -29,6 +29,7 @@ export class WorldRenderer {
     group: THREE.Group;
     worldCenterOffset: THREE.Vector3 = new THREE.Vector3();
     buildingGroup?: THREE.Group;
+    lotBorders?: THREE.LineSegments;
 
     // Materials
     materials: Record<string, THREE.MeshStandardMaterial> = {};
@@ -133,6 +134,12 @@ export class WorldRenderer {
                 return new THREE.MeshBasicMaterial({ color: LOT_BORDER_COLORS.away });
             default:
                 return new THREE.MeshBasicMaterial({ color: LOT_BORDER_COLORS.vacant });
+        }
+    }
+
+    public setLotBordersVisible(visible: boolean) {
+        if (this.lotBorders) {
+            this.lotBorders.visible = visible;
         }
     }
 
@@ -350,6 +357,7 @@ export class WorldRenderer {
         });
         const borderLines = new THREE.LineSegments(geometry, material);
         borderLines.userData = { type: 'lot-borders' };
+        this.lotBorders = borderLines;
         this.group.add(borderLines);
     }
 

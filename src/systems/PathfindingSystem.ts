@@ -1885,5 +1885,90 @@ export class PathfindingSystem {
         return lot.parkingSpots.filter(spot => spot.occupiedBy === null).length;
     }
 
+    /**
+     * Snap a vehicle to a proper roadside parking position.
+     * Call this when a driver exits to prevent cars blocking the road.
+     * Returns true if the vehicle was moved to a proper spot.
+     */
+    snapToRoadsideParking(vehicle: Vehicle): boolean {
+        const svg = this.toSvg(vehicle.position);
+
+        // Check if vehicle is in a lot (proper parking) - if so, leave it alone
+        const lot = this.findLotContainingPoint(svg, this.lots);
+        if (lot) {
+            return true; // Already parked in a lot
+        }
+
+        // Check if on road - if so, need to move to curb
+        const road = this.getRoadAt(svg.x, svg.y);
+        if (!road) {
+            // Not on road, not in lot - might be on sidewalk or edge, leave it
+            return true;
+        }
+
+        // Vehicle is on a road - check if it's blocking (in middle vs curb)
+        const curbInset = Math.max(2, Math.min(6, road.type === 'vertical' ? road.width * 0.15 : road.height * 0.15));
+        const isNearCurb = road.type === 'vertical'
+            ? (svg.x <= road.x + curbInset + 4 || svg.x >= road.x + road.width - curbInset - 4)
+            : (svg.y <= road.y + curbInset + 4 || svg.y >= road.y + road.height - curbInset - 4);
+
+        // Also check if near intersection - always need to move away
+        const nearIntersection = this.isNearIntersection(svg.x, svg.y, 30);
+
+        if (isNearCurb && !nearIntersection) {
+            // Already parked at curb and not blocking intersection
+            // Just ensure rotation is aligned with road
+            vehicle.targetRotation = road.type === 'vertical' ? 0 : Math.PI / 2;
+            if (vehicle.carGroup) {
+                vehicle.carGroup.rotation.y = vehicle.targetRotation;
+            }
+            return true;
+        }
+
+        // Need to snap to proper curb position
+        const curbSpot = this.getCurbsidePointNearRoad(svg);
+        if (!curbSpot) {
+            return false;
+        }
+
+        // Move vehicle to curb position
+        const worldPos = this.toWorld(curbSpot.point, 1);
+        vehicle.position.copy(worldPos);
+        vehicle.targetRotation = curbSpot.rotation;
+        if (vehicle.carGroup) {
+            vehicle.carGroup.position.copy(worldPos);
+            vehicle.carGroup.rotation.y = curbSpot.rotation;
+        }
+        vehicle.target = null;
+        vehicle.path = [];
+
+        return true;
+    }
+
+    /**
+     * Check if a point is blocking traffic (in middle of road or near intersection).
+     * Used to validate parking positions.
+     */
+    isBlockingTraffic(x: number, y: number): boolean {
+        const road = this.getRoadAt(x, y);
+        if (!road) return false; // Not on road
+
+        // Check if near intersection
+        if (this.isNearIntersection(x, y, 25)) {
+            return true;
+        }
+
+        // Check if in middle of road (not at curb)
+        const laneWidth = road.type === 'vertical' ? road.width : road.height;
+        const centerThreshold = laneWidth * 0.3; // Within 30% of center = blocking
+
+        if (road.type === 'vertical') {
+            const center = road.x + road.width / 2;
+            return Math.abs(x - center) < centerThreshold;
+        } else {
+            const center = road.y + road.height / 2;
+            return Math.abs(y - center) < centerThreshold;
+        }
+    }
 
 }

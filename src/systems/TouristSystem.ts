@@ -127,6 +127,8 @@ export class TouristSystem {
 
         if (tourist.state === TouristState.ARRIVING) {
             if (car && !car.target && (!car.path || car.path.length === 0)) {
+                // Snap car to proper roadside parking before driver exits
+                this.pathSystem.snapToRoadsideParking(car);
                 tourist.exitCar();
                 if (tourist.data.lodgingLot) {
                     tourist.state = TouristState.STAYING;

@@ -5,7 +5,7 @@
 - **map/lots_BB_map.svg**: Vector lots map (lot boundaries)
 - **map/roads_BB_map.svg**: Vector roads map (road rectangles)
 - **map/houses_BB_map.svg**: Vector houses map (building footprints)
-- **map/image_BB_map.png**: Texture overlay aligned to the SVG viewBox
+- **map/image_BB_map.jpg**: Texture overlay aligned to the SVG viewBox
 - **map_data.json**: Extracted structured data
 - **extract_map.js**: Node script that parses SVGs to JSON
 - **visualize_map.html**: Browser preview of extracted data
