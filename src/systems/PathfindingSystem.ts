@@ -514,6 +514,9 @@ export class PathfindingSystem {
     private simTimeSeconds = 0;
     private streetParking: Map<string, string> = new Map();
     private lotBoundsCache: Map<number, { minX: number; minY: number; maxX: number; maxY: number }> = new Map();
+    private vehicleStuck: Map<string, { x: number; y: number; t: number; lastReroute: number }> = new Map();
+    private vehicleLane: Map<string, number> = new Map();
+    private vehicleLaneUntil: Map<string, number> = new Map();
 
     // Check if a point is on any road
     isOnRoad(x: number, y: number): boolean {
@@ -1033,8 +1036,8 @@ export class PathfindingSystem {
                 }
 
                 // Vehicle collision avoidance: slow down when too close to others
-                const avoidRadius = 18;
-                const minDist = 6;
+                const avoidRadius = 24;
+                const minDist = 10;
                 let speedFactor = 1;
                 let lateralPush = new THREE.Vector3();
                 const forward = agent.target
@@ -1046,32 +1049,149 @@ export class PathfindingSystem {
                 }
                 forward.normalize();
                 const lateral = new THREE.Vector3(-forward.z, 0, forward.x);
+                let blocking = false;
+                let blockedByParked = false;
                 for (const other of agents) {
                     if (agent === other) continue;
                     const distSq = agent.position.distanceToSquared(other.position);
                     if (distSq < avoidRadius * avoidRadius && distSq > 0.01) {
                         const d = Math.sqrt(distSq);
+                        const parked = other instanceof Vehicle && !other.driver;
                         if (d < minDist) {
                             const push = new THREE.Vector3().subVectors(agent.position, other.position).normalize();
                             push.multiplyScalar((minDist - d) * 0.6);
                             agent.position.add(push);
+                            blocking = true;
+                            if (parked) blockedByParked = true;
                         }
                         const factor = d <= minDist ? 0 : (d - minDist) / (avoidRadius - minDist);
-                        speedFactor = Math.min(speedFactor, Math.max(0, Math.min(1, factor)));
+                        const floor = parked ? 0.4 : 0;
+                        speedFactor = Math.min(speedFactor, Math.max(floor, Math.min(1, factor)));
 
                         // Lateral avoidance: nudge to the side away from the other agent
                         const toOther = new THREE.Vector3().subVectors(other.position, agent.position);
                         toOther.y = 0;
                         const sideSign = Math.sign(toOther.dot(lateral)) || 1;
-                        const strength = (avoidRadius - d) / avoidRadius;
+                        const strength = (avoidRadius - d) / avoidRadius * (parked ? 1.6 : 1);
                         lateralPush.add(lateral.clone().multiplyScalar(-sideSign * strength));
                     }
                 }
                 agent.speedModifier = speedFactor;
                 if (lateralPush.lengthSq() > 0.0001) {
-                    lateralPush.multiplyScalar(delta * 6);
+                    lateralPush.multiplyScalar(delta * (blocking ? 10 : 6));
                     agent.position.add(lateralPush);
                 }
+
+                // Lane keeping + pass-around when blocked (on-road only)
+                if (!currentLot) {
+                    const road = this.getNearestRoadSegment(currentSvg.x, currentSvg.y);
+                    if (road) {
+                        let laneSign = this.vehicleLane.get(agent.id);
+                        if (!laneSign) {
+                            laneSign = Math.random() < 0.5 ? -1 : 1;
+                            this.vehicleLane.set(agent.id, laneSign);
+                        }
+                        const laneCooldown = this.vehicleLaneUntil.get(agent.id) ?? 0;
+                        if (blocking && (this.simTimeSeconds > laneCooldown)) {
+                            const targetLane = -laneSign;
+                            const laneOffset = (road.type === 'vertical' ? road.width : road.height) * 0.22;
+                            const laneCoord = road.type === 'vertical'
+                                ? road.x + road.width / 2 + targetLane * laneOffset
+                                : road.y + road.height / 2 + targetLane * laneOffset;
+
+                            let laneClear = true;
+                            const aheadDist = 40;
+                            const behindDist = 18;
+                            for (const other of agents) {
+                                if (other === agent) continue;
+                                if (!(other instanceof Vehicle)) continue;
+                                if (!other.driver) continue;
+                                const oSvg = this.toSvg(other.position);
+                                const onSameRoad = this.getNearestRoadSegment(oSvg.x, oSvg.y);
+                                if (!onSameRoad || onSameRoad.id !== road.id) continue;
+
+                                if (road.type === 'vertical') {
+                                    if (Math.abs(oSvg.x - laneCoord) > laneOffset * 0.9) continue;
+                                    const dy = oSvg.y - currentSvg.y;
+                                    if (dy > -behindDist && dy < aheadDist) {
+                                        laneClear = false;
+                                        break;
+                                    }
+                                } else {
+                                    if (Math.abs(oSvg.y - laneCoord) > laneOffset * 0.9) continue;
+                                    const dx = oSvg.x - currentSvg.x;
+                                    if (dx > -behindDist && dx < aheadDist) {
+                                        laneClear = false;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (laneClear) {
+                                laneSign = targetLane;
+                                this.vehicleLane.set(agent.id, laneSign);
+                                this.vehicleLaneUntil.set(agent.id, this.simTimeSeconds + 2);
+                            } else {
+                                agent.speedModifier = Math.min(agent.speedModifier, 0.6);
+                            }
+                        }
+
+                        const laneOffset = (road.type === 'vertical' ? road.width : road.height) * 0.22;
+                        const laneStrength = blockedByParked ? 8 : 4;
+                        if (road.type === 'vertical') {
+                            const desiredX = road.x + road.width / 2 + laneSign * laneOffset;
+                            const shift = desiredX - currentSvg.x;
+                            agent.position.x += Math.max(-laneStrength, Math.min(laneStrength, shift)) * delta;
+                        } else {
+                            const desiredY = road.y + road.height / 2 + laneSign * laneOffset;
+                            const shift = desiredY - currentSvg.y;
+                            agent.position.z += Math.max(-laneStrength, Math.min(laneStrength, shift)) * delta;
+                        }
+                    }
+                }
+
+                // Stuck detector: reroute if we haven't moved for a while
+                const record = this.vehicleStuck.get(agent.id) || {
+                    x: currentSvg.x,
+                    y: currentSvg.y,
+                    t: 0,
+                    lastReroute: -Infinity,
+                };
+                const moved = Math.hypot(currentSvg.x - record.x, currentSvg.y - record.y);
+                const isSlow = agent.currentSpeed < 2;
+                if (moved < 0.4 && isSlow) {
+                    record.t += delta;
+                } else {
+                    record.t = 0;
+                }
+                record.x = currentSvg.x;
+                record.y = currentSvg.y;
+
+                const rerouteCooldown = 5;
+                if (record.t > 3 && (this.simTimeSeconds - record.lastReroute) > rerouteCooldown) {
+                    let dest: THREE.Vector3 | null = null;
+                    if (agent.path && agent.path.length > 0) {
+                        dest = agent.path[agent.path.length - 1];
+                    } else if (agent.target) {
+                        dest = agent.target;
+                    } else {
+                        const parkingLeg = (agent as any).parkingLeg as THREE.Vector3[] | undefined;
+                        if (parkingLeg && parkingLeg.length > 0) {
+                            dest = parkingLeg[parkingLeg.length - 1];
+                        }
+                    }
+                    if (!dest) dest = this.getRandomPointOnRoad();
+
+                    const newPath = this.getVehiclePathTo(agent.position, dest, this.lots, agent);
+                    if (newPath.length > 0) {
+                        agent.path = newPath;
+                        agent.target = null;
+                    }
+                    record.t = 0;
+                    record.lastReroute = this.simTimeSeconds;
+                }
+
+                this.vehicleStuck.set(agent.id, record);
             }
 
             // COLLISION AVOIDANCE / SEPARATION

@@ -14,7 +14,7 @@ import { AddressSystem } from '../systems/AddressSystem';
 import { Vehicle } from '../entities/Vehicle';
 import { Agent } from '../entities/Agent';
 import { Resident } from '../entities/Resident';
-import { MapData, AgentType } from '../types';
+import { MapData, AgentType, Lot, LotUsage, TownEvent, TownEventType } from '../types';
 import { Minimap } from './Minimap';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { OverlayMenu, OverlayType } from '../ui/OverlayMenu';
@@ -26,7 +26,7 @@ import { ResidentScheduleSystem } from '../systems/ResidentScheduleSystem';
 import { EventSystem } from '../systems/EventSystem';
 import { SchoolBusSystem } from '../systems/SchoolBusSystem';
 import { SheriffSystem } from '../systems/SheriffSystem';
-import { EventLog } from '../ui/EventLog';
+import { EventLog, LogLocation } from '../ui/EventLog';
 import { SchoolBus } from '../entities/SchoolBus';
 
 async function init() {
@@ -512,12 +512,17 @@ async function init() {
     });
 
     // Event Log
-    eventLog = new EventLog();
+    eventLog = new EventLog({
+        onLocationClick: (location) => {
+            jumpToSvgPosition(location.x, location.z);
+        }
+    });
 
     // Event System
     eventSystem = new EventSystem();
     eventSystem.onAny((event, day) => {
-        eventLog.addTownEvent(event, day, timeSystem.time.totalSeconds);
+        const location = getEventLogLocation(event);
+        eventLog.addTownEvent(event, day, timeSystem.time.totalSeconds, location);
     });
 
     const topbar = new Topbar({
@@ -799,7 +804,8 @@ async function init() {
                 agents.push(agent as any);
                 if (agent instanceof SchoolBus) {
                     worldRenderer.group.add(agent.busGroup);
-                    eventLog.addArrival('school_bus', 'School Bus', timeSystem.time.day, timeSystem.time.totalSeconds);
+                    const location = { x: agent.position.x, z: agent.position.z };
+                    eventLog.addArrival('school_bus', 'School Bus', timeSystem.time.day, timeSystem.time.totalSeconds, location);
                 } else {
                     worldRenderer.group.add((agent as any).mesh);
                 }
@@ -809,7 +815,8 @@ async function init() {
                 if (idx >= 0) agents.splice(idx, 1);
                 if (agent instanceof SchoolBus) {
                     worldRenderer.group.remove(agent.busGroup);
-                    eventLog.addDeparture('school_bus', 'School Bus', timeSystem.time.day, timeSystem.time.totalSeconds);
+                    const location = { x: agent.position.x, z: agent.position.z };
+                    eventLog.addDeparture('school_bus', 'School Bus', timeSystem.time.day, timeSystem.time.totalSeconds, location);
                 } else {
                     worldRenderer.group.remove((agent as any).mesh);
                 }
@@ -826,7 +833,8 @@ async function init() {
                 agents.push(agent as any);
                 if (agent instanceof Vehicle) {
                     worldRenderer.group.add(agent.carGroup);
-                    eventLog.addArrival('sheriff', 'Sheriff', timeSystem.time.day, timeSystem.time.totalSeconds);
+                    const location = { x: agent.position.x, z: agent.position.z };
+                    eventLog.addArrival('sheriff', 'Sheriff', timeSystem.time.day, timeSystem.time.totalSeconds, location);
                 } else {
                     worldRenderer.group.add((agent as any).mesh);
                 }
@@ -836,7 +844,8 @@ async function init() {
                 if (idx >= 0) agents.splice(idx, 1);
                 if (agent instanceof Vehicle) {
                     worldRenderer.group.remove(agent.carGroup);
-                    eventLog.addDeparture('sheriff', 'Sheriff', timeSystem.time.day, timeSystem.time.totalSeconds);
+                    const location = { x: agent.position.x, z: agent.position.z };
+                    eventLog.addDeparture('sheriff', 'Sheriff', timeSystem.time.day, timeSystem.time.totalSeconds, location);
                 } else {
                     worldRenderer.group.remove((agent as any).mesh);
                 }
@@ -1017,6 +1026,57 @@ async function init() {
         followTransition.startTarget.copy(controls.target);
         followTransition.endTarget.copy(pose.target);
         followLastPos = pose.target.clone();
+    }
+
+    function getLotCenter(lot: Lot): { x: number; z: number } {
+        const centerX = lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length;
+        const centerY = lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length;
+        return { x: centerX, z: centerY };
+    }
+
+    function getLotLocation(lot?: Lot): LogLocation | undefined {
+        if (!lot || lot.points.length === 0) return undefined;
+        const center = getLotCenter(lot);
+        const address = lot.address;
+        let label: string | undefined;
+        if (address) {
+            const streetNumber = Number.isFinite(address.streetNumber) ? address.streetNumber : null;
+            label = streetNumber ? `${streetNumber} ${address.streetName}` : address.fullAddress;
+        }
+        return { x: center.x, z: center.z, label };
+    }
+
+    function getEventLogLocation(event: TownEvent): LogLocation | undefined {
+        if (!world || !world.lots || world.lots.length === 0) return undefined;
+        if (event.type === TownEventType.BAR_OPENS || event.type === TownEventType.BAR_HAPPY_HOUR || event.type === TownEventType.BAR_CLOSES) {
+            const barLot = world.lots.find(lot => lot.usage === LotUsage.BAR);
+            return getLotLocation(barLot);
+        }
+        if (event.type === TownEventType.CHURCH_SERVICE) {
+            const churchLot = world.lots.find(lot => lot.usage === LotUsage.CHURCH);
+            return getLotLocation(churchLot);
+        }
+        return undefined;
+    }
+
+    function jumpToSvgPosition(svgX: number, svgY: number) {
+        const targetLook = new THREE.Vector3(svgX, 2, svgY).add(worldRenderer.group.position);
+        const cameraPos = clampCameraPosition(targetLook.clone().add(new THREE.Vector3(0, 160, 240)));
+
+        followActive = false;
+        followTarget = null;
+        pendingFollowTarget = null;
+
+        cameraJump.active = true;
+        cameraJump.elapsed = 0;
+        cameraJump.duration = 0.45;
+        cameraJump.startPos.copy(camera.position);
+        cameraJump.endPos.copy(cameraPos);
+        cameraJump.startTarget.copy(controls.target);
+        cameraJump.endTarget.copy(targetLook);
+        cameraJump.onComplete = null;
+        cameraJump.controlsWasEnabled = controls.enabled;
+        controls.enabled = false;
     }
 
     function jumpToEntity(entity: { type: string; data: any }) {

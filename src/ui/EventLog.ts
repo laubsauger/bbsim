@@ -8,10 +8,18 @@ export interface LogEntry {
     timestamp: number; // Game time in seconds
     day: number;
     icon: string;
+    location?: LogLocation;
+}
+
+export interface LogLocation {
+    x: number;
+    z: number;
+    label?: string;
 }
 
 export interface EventLogConfig {
     maxEntries?: number;
+    onLocationClick?: (location: LogLocation) => void;
 }
 
 const EVENT_ICONS: Partial<Record<TownEventType, string>> = {
@@ -67,9 +75,11 @@ export class EventLog {
     private activeFilters: Set<string> = new Set(['school', 'sheriff', 'bar', 'tourist', 'resident', 'system']);
     private currentDay: number = 1;
     private currentTime: string = '08:00';
+    private onLocationClick?: (location: LogLocation) => void;
 
     constructor(config: EventLogConfig = {}) {
         this.maxEntries = config.maxEntries || 100;
+        this.onLocationClick = config.onLocationClick;
 
         this.container = document.createElement('div');
         this.container.className = 'event-log';
@@ -123,7 +133,7 @@ export class EventLog {
     }
 
     // Add a town event
-    addTownEvent(event: TownEvent, day: number, gameTimeSeconds: number) {
+    addTownEvent(event: TownEvent, day: number, gameTimeSeconds: number, location?: LogLocation) {
         const category = this.getCategoryForEvent(event.type);
         const entry: LogEntry = {
             id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -133,12 +143,13 @@ export class EventLog {
             timestamp: gameTimeSeconds,
             day,
             icon: EVENT_ICONS[event.type] || '📢',
+            location,
         };
         this.addEntry(entry);
     }
 
     // Add arrival event
-    addArrival(entityType: 'tourist' | 'resident' | 'sheriff' | 'school_bus', name: string, day: number, gameTimeSeconds: number) {
+    addArrival(entityType: 'tourist' | 'resident' | 'sheriff' | 'school_bus', name: string, day: number, gameTimeSeconds: number, location?: LogLocation) {
         const icons = { tourist: '📷', resident: '🏠', sheriff: '🚔', school_bus: '🚌' };
         const category = entityType === 'school_bus' ? 'school' : entityType;
         const entry: LogEntry = {
@@ -149,12 +160,13 @@ export class EventLog {
             timestamp: gameTimeSeconds,
             day,
             icon: icons[entityType] || '👤',
+            location,
         };
         this.addEntry(entry);
     }
 
     // Add departure event
-    addDeparture(entityType: 'tourist' | 'resident' | 'sheriff' | 'school_bus', name: string, day: number, gameTimeSeconds: number) {
+    addDeparture(entityType: 'tourist' | 'resident' | 'sheriff' | 'school_bus', name: string, day: number, gameTimeSeconds: number, location?: LogLocation) {
         const icons = { tourist: '📷', resident: '🏠', sheriff: '🚔', school_bus: '🚌' };
         const category = entityType === 'school_bus' ? 'school' : entityType;
         const entry: LogEntry = {
@@ -165,12 +177,13 @@ export class EventLog {
             timestamp: gameTimeSeconds,
             day,
             icon: icons[entityType] || '👤',
+            location,
         };
         this.addEntry(entry);
     }
 
     // Add general info message
-    addInfo(message: string, category: LogEntry['category'], icon: string, day: number, gameTimeSeconds: number) {
+    addInfo(message: string, category: LogEntry['category'], icon: string, day: number, gameTimeSeconds: number, location?: LogLocation) {
         const entry: LogEntry = {
             id: `info_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'info',
@@ -179,6 +192,7 @@ export class EventLog {
             timestamp: gameTimeSeconds,
             day,
             icon,
+            location,
         };
         this.addEntry(entry);
     }
@@ -212,11 +226,43 @@ export class EventLog {
             const timeStr = this.formatTime(entry.timestamp);
             const color = CATEGORY_COLORS[entry.category];
 
-            el.innerHTML = `
-                <span class="event-log__entry-icon">${entry.icon}</span>
-                <span class="event-log__entry-time">Day ${entry.day} ${timeStr}</span>
-                <span class="event-log__entry-message" style="color: ${color}">${entry.message}</span>
-            `;
+            const iconEl = document.createElement('span');
+            iconEl.className = 'event-log__entry-icon';
+            iconEl.textContent = entry.icon;
+
+            const timeEl = document.createElement('span');
+            timeEl.className = 'event-log__entry-time';
+            timeEl.textContent = `Day ${entry.day} ${timeStr}`;
+
+            const messageEl = document.createElement('span');
+            messageEl.className = 'event-log__entry-message';
+            messageEl.style.color = color;
+            messageEl.textContent = entry.message;
+
+            if (entry.location?.label) {
+                const addrEl = document.createElement('span');
+                addrEl.className = 'event-log__entry-address';
+                addrEl.textContent = entry.location.label;
+                messageEl.append(' ');
+                messageEl.appendChild(addrEl);
+            }
+
+            el.appendChild(iconEl);
+            el.appendChild(timeEl);
+            el.appendChild(messageEl);
+
+            if (entry.location && this.onLocationClick) {
+                const targetBtn = document.createElement('button');
+                targetBtn.className = 'event-log__entry-target';
+                targetBtn.type = 'button';
+                targetBtn.title = 'Jump to location';
+                targetBtn.textContent = '🎯';
+                targetBtn.addEventListener('click', (evt) => {
+                    evt.stopPropagation();
+                    this.onLocationClick?.(entry.location as LogLocation);
+                });
+                el.appendChild(targetBtn);
+            }
 
             this.entriesContainer.appendChild(el);
         });
@@ -373,6 +419,25 @@ export class EventLog {
 
                 .event-log__entry-message {
                     flex: 1;
+                }
+
+                .event-log__entry-address {
+                    font-size: 9px;
+                    color: rgba(242, 233, 218, 0.65);
+                    margin-left: 6px;
+                }
+
+                .event-log__entry-target {
+                    border: none;
+                    background: transparent;
+                    cursor: pointer;
+                    padding: 2px 4px;
+                    font-size: 12px;
+                    opacity: 0.85;
+                }
+
+                .event-log__entry-target:hover {
+                    opacity: 1;
                 }
 
                 .event-log__empty {
