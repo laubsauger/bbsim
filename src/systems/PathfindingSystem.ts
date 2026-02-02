@@ -704,6 +704,41 @@ export class PathfindingSystem {
         return false;
     }
 
+    // Check if a road is a main road (not an alley)
+    isMainRoad(road: RoadSegment): boolean {
+        // Alleys have "alley" in their ID and are narrower (~35 vs ~67 for main roads)
+        if (road.id.toLowerCase().includes('alley')) return false;
+        const roadWidth = road.type === 'vertical' ? road.width : road.height;
+        return roadWidth >= 50;
+    }
+
+    // Check if a point is on a main road (not an alley)
+    isOnMainRoad(x: number, y: number): boolean {
+        const road = this.getRoadAt(x, y);
+        if (!road) return false;
+        return this.isMainRoad(road);
+    }
+
+    // Get nearest point on a main road (for large vehicles like school bus)
+    getNearestMainRoadPoint(x: number, y: number): Point {
+        let nearest: Point = { x, y };
+        let minDist = Infinity;
+
+        for (const road of this.roads) {
+            if (!this.isMainRoad(road)) continue;
+
+            const px = Math.max(road.x, Math.min(x, road.x + road.width));
+            const py = Math.max(road.y, Math.min(y, road.y + road.height));
+            const dist = Math.sqrt((px - x) ** 2 + (py - y) ** 2);
+            if (dist < minDist) {
+                minDist = dist;
+                nearest = { x: px, y: py };
+            }
+        }
+
+        return nearest;
+    }
+
     isOnSidewalk(x: number, y: number): boolean {
         const padding = 4;
         for (const road of this.roads) {
@@ -1201,8 +1236,14 @@ export class PathfindingSystem {
         agents.forEach(agent => {
             const isPedestrian = this.isPedestrian(agent);
             const lotBefore = isPedestrian ? this.findLotContainingPoint(this.toSvg(agent.position), this.lots) : null;
-            // Skip vehicles that are parked (no driver)
+            // For parked vehicles (no driver), check if blocking and snap to curb
             if (agent instanceof Vehicle && !agent.driver) {
+                const svg = this.toSvg(agent.position);
+                const lot = this.findLotContainingPoint(svg, this.lots);
+                // Only check road-parked cars, not lot-parked
+                if (!lot && this.isBlockingTraffic(svg.x, svg.y)) {
+                    this.snapToRoadsideParking(agent);
+                }
                 return;
             }
 

@@ -143,9 +143,9 @@ async function init() {
     sunLight.castShadow = true;
 
     // Shadow configuration - 4096 provides good quality with better performance
-    // Shadow configuration - 4096 provides good quality with better performance
-    sunLight.shadow.mapSize.width = 8192;
-    sunLight.shadow.mapSize.height = 8192;
+    // Reverted from 8192 to prevent crash
+    sunLight.shadow.mapSize.width = 4096;
+    sunLight.shadow.mapSize.height = 4096;
     sunLight.shadow.camera.near = 100;
     sunLight.shadow.camera.far = 20000;
     sunLight.shadow.camera.left = -3000;

@@ -216,9 +216,11 @@ export class Vehicle extends Agent {
         const hlIntensity = lightsOn ? 1.0 : 0.0;
         this.headlights.forEach(hl => {
             if (hl.material instanceof THREE.MeshStandardMaterial) {
-                hl.material.emissiveIntensity = hlIntensity;
+                hl.material.emissiveIntensity = hlIntensity * 20; // High emissive for glare
             }
         });
+
+
 
 
 

@@ -166,11 +166,15 @@ export class World {
         // Explicit assignments (stable across map regen)
         const barLotId = 618;
         const churchLotId = 556;
+        let hasExplicitBar = false;
         if (lots.some(lot => lot.id === barLotId)) {
             special.set(barLotId, { usage: LotUsage.BAR, state: LotState.OCCUPIED });
+            hasExplicitBar = true;
+            console.log(`[World] Bar assigned to lot ${barLotId} (explicit)`);
         }
         if (lots.some(lot => lot.id === churchLotId)) {
             special.set(churchLotId, { usage: LotUsage.CHURCH, state: LotState.OCCUPIED });
+            console.log(`[World] Church assigned to lot ${churchLotId}`);
         }
 
         const lotCenters = lots.map(lot => {
@@ -188,26 +192,30 @@ export class World {
             };
         });
 
-        // Pick bar lot near the northwest corner of the map (lowest y, then lowest x)
-        const barCandidate = lotCenters.slice().sort((a, b) => (a.cy - b.cy) || (a.cx - b.cx))[0];
-        if (barCandidate && !special.has(barCandidate.id)) {
-            special.set(barCandidate.id, { usage: LotUsage.BAR, state: LotState.OCCUPIED });
+        // Only pick fallback bar lot if we don't have an explicit one
+        if (!hasExplicitBar) {
+            // Pick bar lot near the northwest corner of the map (lowest y, then lowest x)
+            const barCandidate = lotCenters.slice().sort((a, b) => (a.cy - b.cy) || (a.cx - b.cx))[0];
+            if (barCandidate && !special.has(barCandidate.id)) {
+                special.set(barCandidate.id, { usage: LotUsage.BAR, state: LotState.OCCUPIED });
+            }
+        }
 
-            // Pick a few nearby lots as parking
+        // Add parking near bar lot
+        const barLot = lotCenters.find(l => special.get(l.id)?.usage === LotUsage.BAR);
+        if (barLot) {
             const nearest = lotCenters
-                .filter(l => l.id !== barCandidate.id)
+                .filter(l => l.id !== barLot.id && !special.has(l.id))
                 .map(l => ({
                     id: l.id,
-                    dist: Math.hypot(l.cx - barCandidate.cx, l.cy - barCandidate.cy),
+                    dist: Math.hypot(l.cx - barLot.cx, l.cy - barLot.cy),
                     area: l.area
                 }))
                 .sort((a, b) => a.dist - b.dist)
                 .slice(0, 3);
 
             nearest.forEach(n => {
-                if (!special.has(n.id)) {
-                    special.set(n.id, { usage: LotUsage.PARKING, state: LotState.EMPTY });
-                }
+                special.set(n.id, { usage: LotUsage.PARKING, state: LotState.EMPTY });
             });
         }
 

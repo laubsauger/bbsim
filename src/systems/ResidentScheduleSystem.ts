@@ -54,8 +54,19 @@ export class ResidentScheduleSystem {
         this.dayOfWeek = dow;
     }
 
+    private updateLogCount = 0;
+
     update(timeSeconds: number, hour: number, residents: Resident[], day: number) {
         this.currentDay = day;
+
+        // Log once to confirm system is running
+        if (this.updateLogCount === 0) {
+            console.log(`[ResidentSchedule] System active with ${residents.length} residents, day ${day}, hour ${hour.toFixed(1)}`);
+            const barLot = this.lots.find(l => l.usage === LotUsage.BAR);
+            const churchLot = this.lots.find(l => l.usage === LotUsage.CHURCH);
+            console.log(`[ResidentSchedule] Bar lot: ${barLot?.id || 'NOT FOUND'}, Church lot: ${churchLot?.id || 'NOT FOUND'}`);
+            this.updateLogCount++;
+        }
 
         residents.forEach(resident => {
             // If home and the car is abandoned elsewhere, snap it back home
@@ -162,6 +173,12 @@ export class ResidentScheduleSystem {
         if (schedule.lastPlanDay !== day) {
             this.generateDayPlan(resident, schedule, day);
             schedule.lastPlanDay = day;
+            // Log first few schedule generations
+            if (this.schedules.size <= 3) {
+                const barActivities = schedule.dayPlan.filter(a => a.activity === ResidentState.AT_BAR);
+                const churchActivities = schedule.dayPlan.filter(a => a.activity === ResidentState.AT_CHURCH);
+                console.log(`[Schedule] Generated plan for ${resident.fullName} (day ${day}): ${schedule.dayPlan.length} activities, ${barActivities.length} bar visits, ${churchActivities.length} church`);
+            }
         }
 
         return schedule;
@@ -246,7 +263,8 @@ export class ResidentScheduleSystem {
 
             // Evening bar visit (based on drinking habit + sociability)
             const barChance = Math.max(0.15, data.drinkingHabit * (0.6 + data.sociability * 0.4));
-            if (Math.random() < barChance) {
+            const roll = Math.random();
+            if (roll < barChance) {
                 const barStart = 18 + Math.random() * 4; // 6pm-10pm
                 const barDuration = 1 + Math.random() * 2 * data.drinkingHabit;
                 plan.push({
@@ -256,7 +274,10 @@ export class ResidentScheduleSystem {
                     targetLot: barLot,
                     priority: 4,
                 });
+                console.log(`[Schedule] ${resident.fullName} scheduled for bar at ${barStart.toFixed(1)}h (chance: ${(barChance*100).toFixed(0)}%, roll: ${(roll*100).toFixed(0)}%)`);
             }
+        } else {
+            console.warn('[Schedule] No bar lot found!');
         }
 
         // Evening wind down at home
@@ -438,6 +459,10 @@ export class ResidentScheduleSystem {
         // Check if activity changed
         if (schedule.currentActivity !== currentPlan.activity ||
             schedule.destinationLot?.id !== currentPlan.targetLot?.id) {
+            // Debug log for bar/church transitions
+            if (currentPlan.activity === ResidentState.AT_BAR || currentPlan.activity === ResidentState.AT_CHURCH) {
+                console.log(`[Schedule] ${resident.fullName} transitioning to ${currentPlan.activity} at lot ${currentPlan.targetLot?.id}`);
+            }
             this.transitionTo(resident, schedule, currentPlan.activity, currentPlan.targetLot, timeSeconds);
         }
 
@@ -480,7 +505,21 @@ export class ResidentScheduleSystem {
                     resident.enterCar();
                     resident.behaviorState = ResidentState.DRIVING;
                     const target = this.getParkingTarget(targetLot);
-                    resident.data.car.target = new THREE.Vector3(target.x, 1, target.y);
+                    const targetPos = new THREE.Vector3(target.x, 1, target.y);
+                    // Use proper road-based pathfinding instead of direct target
+                    const carPath = this.pathSystem.getVehiclePathTo(
+                        resident.data.car.position,
+                        targetPos,
+                        this.lots,
+                        resident.data.car
+                    );
+                    if (carPath.length > 0) {
+                        resident.data.car.path = carPath;
+                        resident.data.car.target = null; // Path system will set targets
+                    } else {
+                        // Fallback to direct target if no path found
+                        resident.data.car.target = targetPos;
+                    }
                 } else {
                     // Walk there
                     const point = this.getRandomPointInLot(targetLot);
@@ -503,9 +542,17 @@ export class ResidentScheduleSystem {
             Math.pow(resident.position.z - targetCenter.y, 2)
         );
 
-        // Use car for longer distances, based on adventurous trait
+        // Base walking threshold based on adventurous trait
         const walkingThreshold = 100 + resident.data.adventurous * 200;
-        return dist > walkingThreshold;
+
+        // Short distances: always walk
+        if (dist < walkingThreshold * 0.5) return false;
+
+        // Medium distances: 60% chance to drive
+        if (dist < walkingThreshold) return Math.random() < 0.6;
+
+        // Long distances: 85% chance to drive (some people still walk)
+        return Math.random() < 0.85;
     }
 
     private getCurrentLot(resident: Resident): Lot | undefined {

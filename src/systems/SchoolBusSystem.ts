@@ -62,7 +62,7 @@ export class SchoolBusSystem {
     }
 
     private calculateStops() {
-        // Get residential lots and create stops along roads near them
+        // Get residential lots and create stops along MAIN roads only (avoid alleys)
         const residentialLots = this.lots.filter(lot =>
             lot.usage === LotUsage.RESIDENTIAL && lot.roadAccessPoint
         );
@@ -75,14 +75,24 @@ export class SchoolBusSystem {
             if (usedLots.has(lot.id)) continue;
 
             const accessPoint = lot.roadAccessPoint!;
-            const stop = new THREE.Vector3(accessPoint.x, 1, accessPoint.y);
+
+            // Skip if access point is on an alley - find nearest main road instead
+            let stopPoint: { x: number; y: number };
+            if (this.pathSystem.isOnMainRoad(accessPoint.x, accessPoint.y)) {
+                stopPoint = accessPoint;
+            } else {
+                // Find nearest main road point for this lot
+                stopPoint = this.pathSystem.getNearestMainRoadPoint(accessPoint.x, accessPoint.y);
+            }
+
+            const stop = new THREE.Vector3(stopPoint.x, 1, stopPoint.y);
 
             // Mark nearby lots as covered by this stop
             for (const otherLot of residentialLots) {
                 if (otherLot.roadAccessPoint) {
                     const dist = Math.sqrt(
-                        Math.pow(accessPoint.x - otherLot.roadAccessPoint.x, 2) +
-                        Math.pow(accessPoint.y - otherLot.roadAccessPoint.y, 2)
+                        Math.pow(stopPoint.x - otherLot.roadAccessPoint.x, 2) +
+                        Math.pow(stopPoint.y - otherLot.roadAccessPoint.y, 2)
                     );
                     if (dist < 150) { // Within 150 units = same stop
                         usedLots.add(otherLot.id);
@@ -103,6 +113,7 @@ export class SchoolBusSystem {
 
         // Limit to reasonable number of stops
         this.residentialStops = stops.slice(0, 8);
+        console.log(`[SchoolBus] Calculated ${this.residentialStops.length} stops on main roads`);
     }
 
     private getEntryPoint(): { x: number; y: number } {

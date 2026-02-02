@@ -71,8 +71,8 @@ export class DayNightCycle {
         // Create moon light (dimmer, blue-ish, desaturated)
         this.moonLight = new THREE.DirectionalLight(0xaaccff, 0.4);
         this.moonLight.castShadow = true;
-        this.moonLight.shadow.mapSize.width = 8192;
-        this.moonLight.shadow.mapSize.height = 8192;
+        this.moonLight.shadow.mapSize.width = 4096;
+        this.moonLight.shadow.mapSize.height = 4096;
         this.moonLight.shadow.camera.near = 100;
         this.moonLight.shadow.camera.far = 20000;
         this.moonLight.shadow.camera.left = -3000;
@@ -131,7 +131,7 @@ export class DayNightCycle {
 
         let lampCounter = 0;
         intersections.forEach((center, i) => {
-            if (i % 4 !== 0) return;
+            if (i % 3 !== 0) return; // Increased density (was 4)
 
             // Rotate which corner based on lamp counter for variety
             const corner = lampCounter % 4;

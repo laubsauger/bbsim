@@ -402,12 +402,31 @@ export class EntityExplorer {
             };
             const scheduleStr = `${formatTime(resident.data.wakeTime)} - ${formatTime(resident.data.sleepTime)}`;
 
+            // Work hours if employed
+            const hasWork = resident.data.workStartTime !== undefined && resident.data.workEndTime !== undefined;
+            const workHoursStr = hasWork
+                ? `${formatTime(resident.data.workStartTime!)} - ${formatTime(resident.data.workEndTime!)}`
+                : null;
+
+            // Format trait as percentage bar
+            const traitBar = (value: number, label: string, color: string) => {
+                const pct = Math.round(value * 100);
+                return `<div class="entity-explorer__trait">
+                    <span class="entity-explorer__trait-label">${label}</span>
+                    <div class="entity-explorer__trait-bar">
+                        <div class="entity-explorer__trait-fill" style="width: ${pct}%; background: ${color};"></div>
+                    </div>
+                    <span class="entity-explorer__trait-value">${pct}%</span>
+                </div>`;
+            };
+
             this.details.innerHTML = `
                 <div class="entity-explorer__detail-title">${resident.fullName}</div>
-                <div class="entity-explorer__detail-meta">Resident • ${resident.data.age} • ${resident.data.occupation}</div>
+                <div class="entity-explorer__detail-meta">Resident • ${resident.data.age} yrs • ${resident.data.occupation}</div>
                 <div class="entity-explorer__detail-row">
                     <span class="entity-explorer__detail-pill" style="background: ${behavior.color}20; color: ${behavior.color};">${behavior.label}</span>
                     <span class="entity-explorer__detail-pill">${resident.isHome ? 'At home' : 'Out'}</span>
+                    ${resident.isInCar ? '<span class="entity-explorer__detail-pill">In car</span>' : ''}
                 </div>
                 <div class="entity-explorer__detail-block">
                     <div class="entity-explorer__detail-label">Personality</div>
@@ -415,7 +434,18 @@ export class EntityExplorer {
                 </div>
                 <div class="entity-explorer__detail-block">
                     <div class="entity-explorer__detail-label">Schedule</div>
-                    <div class="entity-explorer__detail-value">${workLabel} • Awake ${scheduleStr}</div>
+                    <div class="entity-explorer__detail-value">${workLabel}${workHoursStr ? ` (${workHoursStr})` : ''}</div>
+                    <div class="entity-explorer__detail-value" style="font-size: 10px; opacity: 0.7;">Sleep: ${scheduleStr}</div>
+                </div>
+                <div class="entity-explorer__detail-block">
+                    <div class="entity-explorer__detail-label">Traits</div>
+                    <div class="entity-explorer__traits">
+                        ${traitBar(resident.data.sociability, 'Social', '#E74C3C')}
+                        ${traitBar(resident.data.adventurous, 'Adventurous', '#3498DB')}
+                        ${traitBar(resident.data.religiosity, 'Religious', '#9B59B6')}
+                        ${traitBar(resident.data.drinkingHabit, 'Drinks', '#CD853F')}
+                        ${traitBar(resident.data.routineVariation, 'Spontaneous', '#2ECC71')}
+                    </div>
                 </div>
                 <div class="entity-explorer__detail-block">
                     <div class="entity-explorer__detail-label">Home</div>
@@ -853,6 +883,44 @@ export class EntityExplorer {
                     font-size: 10px;
                     color: rgba(242, 233, 218, 0.5);
                     font-family: monospace;
+                }
+
+                .entity-explorer__traits {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px;
+                }
+
+                .entity-explorer__trait {
+                    display: grid;
+                    grid-template-columns: 80px 1fr 32px;
+                    align-items: center;
+                    gap: 8px;
+                    font-size: 10px;
+                }
+
+                .entity-explorer__trait-label {
+                    color: rgba(242, 233, 218, 0.7);
+                }
+
+                .entity-explorer__trait-bar {
+                    height: 6px;
+                    background: rgba(60, 50, 40, 0.8);
+                    border-radius: 3px;
+                    overflow: hidden;
+                }
+
+                .entity-explorer__trait-fill {
+                    height: 100%;
+                    border-radius: 3px;
+                    transition: width 0.3s ease;
+                }
+
+                .entity-explorer__trait-value {
+                    text-align: right;
+                    color: rgba(242, 233, 218, 0.5);
+                    font-family: monospace;
+                    font-size: 9px;
                 }
 
                 .entity-explorer.collapsed {
