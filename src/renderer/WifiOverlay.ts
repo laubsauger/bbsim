@@ -26,7 +26,7 @@ export class WifiOverlay {
             group: config.group,
             bounds: config.bounds,
             cellSize: config.cellSize,
-            y: 6.2,
+            y: 0.30,
             palette: WIFI_PALETTE,
             dynamicRangeDecay: 0.98,
         });

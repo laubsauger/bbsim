@@ -58,6 +58,13 @@ export class ResidentScheduleSystem {
         this.currentDay = day;
 
         residents.forEach(resident => {
+            // If home and the car is abandoned elsewhere, snap it back home
+            if (resident.data.car &&
+                resident.behaviorState === ResidentState.IDLE_HOME &&
+                !resident.isInCar &&
+                !resident.data.car.driver) {
+                this.ensureCarAtHome(resident);
+            }
             const schedule = this.getOrCreateSchedule(resident, day);
             resident.scheduleOverride = true;
 
@@ -95,6 +102,42 @@ export class ResidentScheduleSystem {
             // Check if we need to transition to next activity
             this.updateActivity(resident, schedule, hour, timeSeconds);
         });
+    }
+
+    private ensureCarAtHome(resident: Resident) {
+        const car = resident.data.car;
+        const homeLot = resident.data.homeLot;
+        if (!car || !homeLot) return;
+
+        const xs = homeLot.points.map(p => p.x);
+        const ys = homeLot.points.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        const carX = car.position.x;
+        const carY = car.position.z;
+        const inHomeLot = carX >= minX && carX <= maxX && carY >= minY && carY <= maxY;
+        if (inHomeLot) return;
+
+        // Release any previously held spot
+        this.lots.forEach(lot => {
+            if (!lot.parkingSpots) return;
+            lot.parkingSpots.forEach(spot => {
+                if (spot.occupiedBy === car.id) spot.occupiedBy = null;
+            });
+        });
+
+        const reserved = this.pathSystem.reserveParkingSpot(homeLot, car.id);
+        const street = reserved ? null : this.pathSystem.getStreetParkingSpot(homeLot, car.id);
+        const homeSpot = reserved || street || homeLot.parkingSpot || homeLot.entryPoint || this.getLotCenter(homeLot);
+
+        car.position.set(homeSpot.x, 1, homeSpot.y);
+        if (typeof (homeSpot as any).rotation === 'number') {
+            car.targetRotation = (homeSpot as any).rotation;
+        }
+        car.updateMesh();
     }
 
     private getOrCreateSchedule(resident: Resident, day: number): IndividualSchedule {

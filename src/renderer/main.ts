@@ -13,7 +13,6 @@ import { PopulationSystem } from '../systems/PopulationSystem';
 import { AddressSystem } from '../systems/AddressSystem';
 import { Vehicle } from '../entities/Vehicle';
 import { Agent } from '../entities/Agent';
-import { Resident } from '../entities/Resident';
 import { MapData, AgentType, Lot, LotUsage, TownEvent, TownEventType } from '../types';
 import { Minimap } from './Minimap';
 import { InteractionSystem } from '../systems/InteractionSystem';
@@ -598,22 +597,25 @@ async function init() {
         showPedGraph: false,
         showDebugRoads: false,
         showDebugLots: false,
-        showDebugBuildings: true,
-        showMapTexture: false,
+        showDebugBuildings: false,
+        showParkingLegs: false,
+        showMapTexture: true,
         renderBuildings: true, // Keep meshes by default
         projectOnBuildings: false,
-        mapOffsetX: 0.00850,
-        mapOffsetY: 0.01909,
-        mapScale: 1.3071,
-        mapScaleY: 1.5027,
+        mapOffsetX: 0.00870,
+        mapOffsetY: 0.02090,
+        mapScale: 1.3114,
+        mapScaleY: 1.5109,
         mapRotation: 0,
     };
     debugFolder.add(debugConfig, 'showRoadGraph').name('Show Road Graph').onChange((show: boolean) => {
         if (show && pathSystem) {
             const debugVis = pathSystem.getDebugVisualization();
             worldRenderer.group.add(debugVis);
+            pathSystem.setParkingLegDebugEnabled(debugConfig.showParkingLegs);
             console.log('[Debug] Road graph visualization enabled');
         } else if (pathSystem) {
+            pathSystem.setParkingLegDebugEnabled(false);
             pathSystem.removeDebugVisualization();
             console.log('[Debug] Road graph visualization disabled');
         }
@@ -637,6 +639,11 @@ async function init() {
     });
     debugFolder.add(debugConfig, 'showDebugBuildings').name('Debug Buildings').onChange((show: boolean) => {
         if (debugOverlays) debugOverlays.setVisible('debug_buildings', show);
+    });
+    debugFolder.add(debugConfig, 'showParkingLegs').name('Debug Parking Legs').onChange((show: boolean) => {
+        if (pathSystem) {
+            pathSystem.setParkingLegDebugEnabled(show);
+        }
     });
     debugFolder.add(debugConfig, 'renderBuildings').name('Render Meshes').onChange((show: boolean) => {
         worldRenderer.setBuildingsVisible(show);
@@ -763,9 +770,9 @@ async function init() {
         textureLoader.load('docs/map/image_BB_map.png', (tex) => {
             tex.colorSpace = THREE.SRGBColorSpace;
             mapTexture = tex;
-            if (debugConfig.showMapTexture) {
-                applyMapTextureToMeshes(true);
-            }
+            // Apply texture immediately if it's loaded and enabled in config
+            // The function internally checks config flags.
+            applyMapTextureToMeshes();
         });
 
         debugOverlays = createDebugOverlays(mapData);

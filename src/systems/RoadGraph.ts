@@ -363,6 +363,12 @@ export class RoadGraph {
                 const conn = this.nodes.get(connId);
                 if (!conn) continue;
 
+                const dx = Math.abs(node.x - conn.x);
+                const dy = Math.abs(node.y - conn.y);
+                if (dx > 0.75 && dy > 0.75) {
+                    continue;
+                }
+
                 const points = [
                     new THREE.Vector3(node.x, 2, node.y),
                     new THREE.Vector3(conn.x, 2, conn.y)

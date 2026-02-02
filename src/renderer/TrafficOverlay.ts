@@ -27,7 +27,7 @@ export class TrafficOverlay {
     private renderInterval = 0.1;
 
     constructor(config: TrafficOverlayConfig) {
-        this.windowSeconds = config.windowSeconds ?? 720;
+        this.windowSeconds = config.windowSeconds ?? 3600;
 
         this.layers = {
             traffic_cars: new HeatmapField({
@@ -35,24 +35,27 @@ export class TrafficOverlay {
                 group: config.group,
                 bounds: config.bounds,
                 cellSize: config.cellSize,
-                y: 6.0,
+                y: 0.15,
                 palette: LAYER_PALETTES.traffic_cars,
+                fixedScale: 150,
             }),
             traffic_peds: new HeatmapField({
                 id: 'traffic_peds',
                 group: config.group,
                 bounds: config.bounds,
                 cellSize: config.cellSize,
-                y: 6.05,
+                y: 0.20,
                 palette: LAYER_PALETTES.traffic_peds,
+                fixedScale: 150,
             }),
             traffic_combined: new HeatmapField({
                 id: 'traffic_combined',
                 group: config.group,
                 bounds: config.bounds,
                 cellSize: config.cellSize,
-                y: 6.1,
+                y: 0.25,
                 palette: LAYER_PALETTES.traffic_combined,
+                fixedScale: 150,
             }),
         };
     }

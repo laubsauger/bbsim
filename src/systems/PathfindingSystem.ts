@@ -22,6 +22,7 @@ export class PathfindingSystem {
     private debugGroup: THREE.Group | null = null;
     private parkingLegGroup: THREE.Group | null = null;
     private parkingLegMaterial: THREE.LineBasicMaterial | null = null;
+    private parkingLegDebugEnabled = false;
     private intersectionRects: Array<{ minX: number; minY: number; maxX: number; maxY: number }> = [];
 
     constructor(roads: RoadSegment[]) {
@@ -128,6 +129,13 @@ export class PathfindingSystem {
             return { x: clampedX, y: point.y };
         }
         return point;
+    }
+
+    private adjustPointIfInIntersection(point: Point, clearance: number): Point {
+        if (!this.isNearIntersection(point.x, point.y, clearance)) return point;
+        const road = this.getNearestRoadSegment(point.x, point.y);
+        if (!road) return point;
+        return this.adjustPointAwayFromIntersection(road, point, clearance);
     }
 
     getCurbsidePointNearRoad(point: Point): { point: Point; rotation: number } | null {
@@ -273,7 +281,10 @@ export class PathfindingSystem {
 
         const pathPoints = this.pedestrianGraph.findPath(startPoint, endPoint);
         const graphPath = pathPoints.length > 1
-            ? pathPoints.slice(1).map(p => this.toWorld(p, 1))
+            ? pathPoints.slice(1).map(p => {
+                const adjusted = this.adjustPointIfInIntersection(p, 10);
+                return this.toWorld(adjusted, 1);
+            })
             : [];
 
         if (agent) {
@@ -368,7 +379,8 @@ export class PathfindingSystem {
                 : [];
 
             if (endRoad && endNode && (graphEnd.x !== accessPoint.x || graphEnd.y !== accessPoint.y)) {
-                graphPath.push(this.toWorld(accessPoint, 1));
+                const adjustedAccess = this.adjustPointIfInIntersection(accessPoint, 10);
+                graphPath.push(this.toWorld(adjustedAccess, 1));
             }
         }
 
@@ -380,10 +392,18 @@ export class PathfindingSystem {
             const entry = gate ?? destinationLot.entryPoint ?? parkingSpot;
             const driveIn = this.getDriveInPoint(destinationLot, entry, 8);
             // Vehicles enter via Gate -> Drive-In point -> Park
-            finalLeg.push(nearRoad, this.toWorld(entry, 1), this.toWorld(driveIn, 1), parkPoint);
+            const adjustedNear = this.adjustPointIfInIntersection(accessPoint, 10);
+            const adjustedEntry = this.adjustPointIfInIntersection(entry, 10);
+            finalLeg.push(
+                this.toWorld(adjustedNear, 1),
+                this.toWorld(adjustedEntry, 1),
+                this.toWorld(driveIn, 1),
+                parkPoint
+            );
         } else {
             // If no explicit access, stay on the road network
-            finalLeg.push(this.toWorld(accessPoint, 1));
+            const adjustedAccess = this.adjustPointIfInIntersection(accessPoint, 10);
+            finalLeg.push(this.toWorld(adjustedAccess, 1));
         }
 
         if (vehicle) {
@@ -1176,6 +1196,28 @@ export class PathfindingSystem {
                     agent.target = null;
                     agent.path = [];
                 }
+                // Don't allow vehicles to stop in intersections; nudge them through.
+                if (this.isNearIntersection(currentSvg.x, currentSvg.y, 6) && agent.currentSpeed < 3) {
+                    const road = this.getNearestRoadSegment(currentSvg.x, currentSvg.y);
+                    if (road) {
+                        if (road.type === 'vertical') {
+                            const forward = agent.target ? Math.sign(agent.target.z - agent.position.z) || 1 : 1;
+                            agent.position.z += forward * 6;
+                        } else {
+                            const forward = agent.target ? Math.sign(agent.target.x - agent.position.x) || 1 : 1;
+                            agent.position.x += forward * 6;
+                        }
+                    }
+                }
+                // If our next target is inside an intersection, shift it out.
+                if (agent.target) {
+                    const targetSvg = this.toSvg(agent.target);
+                    if (this.isNearIntersection(targetSvg.x, targetSvg.y, 6)) {
+                        const adjusted = this.adjustPointIfInIntersection(targetSvg, 10);
+                        agent.target.x = adjusted.x;
+                        agent.target.z = adjusted.y;
+                    }
+                }
                 if (!currentLot && !this.isOnRoad(currentSvg.x, currentSvg.y) && this.debugVehicleOffroadCount < 20) {
                     console.warn(`[VehicleRoad] ${agent.id} off-road by ${dist.toFixed(1)} at (${currentSvg.x.toFixed(1)}, ${currentSvg.y.toFixed(1)})`);
                     this.debugVehicleOffroadCount++;
@@ -1338,26 +1380,39 @@ export class PathfindingSystem {
 
                 const rerouteCooldown = 5;
                 if (record.t > 3 && (this.simTimeSeconds - record.lastReroute) > rerouteCooldown) {
-                    let dest: THREE.Vector3 | null = null;
-                    if (agent.path && agent.path.length > 0) {
-                        dest = agent.path[agent.path.length - 1];
-                    } else if (agent.target) {
-                        dest = agent.target;
-                    } else {
-                        const parkingLeg = (agent as any).parkingLeg as THREE.Vector3[] | undefined;
-                        if (parkingLeg && parkingLeg.length > 0) {
-                            dest = parkingLeg[parkingLeg.length - 1];
-                        }
-                    }
-                    if (!dest) dest = this.getRandomPointOnRoad();
-
-                    const newPath = this.getVehiclePathTo(agent.position, dest, this.lots, agent);
-                    if (newPath.length > 0) {
-                        agent.path = newPath;
+                    if (record.t > 12) {
+                        // Extreme stuck (12s+): Teleport to random road point to clear jam
+                        const rescue = this.getRandomPointOnRoad();
+                        agent.position.copy(rescue);
                         agent.target = null;
+                        agent.path = [];
+                        record.t = 0;
+                        if (this.debugVehicleOffroadCount < 20) {
+                            console.warn(`[Traffic] Rescued permanently stuck vehicle ${agent.id}`);
+                            this.debugVehicleOffroadCount++;
+                        }
+                    } else {
+                        // Standard stuck (3s+): Try to reroute
+                        let dest: THREE.Vector3 | null = null;
+                        if (agent.path && agent.path.length > 0) {
+                            dest = agent.path[agent.path.length - 1];
+                        } else if (agent.target) {
+                            dest = agent.target;
+                        } else {
+                            const parkingLeg = (agent as any).parkingLeg as THREE.Vector3[] | undefined;
+                            if (parkingLeg && parkingLeg.length > 0) {
+                                dest = parkingLeg[parkingLeg.length - 1];
+                            }
+                        }
+                        if (!dest) dest = this.getRandomPointOnRoad();
+
+                        const newPath = this.getVehiclePathTo(agent.position, dest, this.lots, agent);
+                        if (newPath.length > 0) {
+                            agent.path = newPath;
+                            agent.target = null;
+                        }
+                        record.lastReroute = this.simTimeSeconds;
                     }
-                    record.t = 0;
-                    record.lastReroute = this.simTimeSeconds;
                 }
 
                 this.vehicleStuck.set(agent.id, record);
@@ -1388,8 +1443,16 @@ export class PathfindingSystem {
                     if (distSq < separationRadius * separationRadius && distSq > 0.1) {
                         const dist = Math.sqrt(distSq);
                         const push = new THREE.Vector3().subVectors(agent.position, other.position).normalize();
+
                         // Stronger push when closer
-                        push.multiplyScalar((separationRadius - dist) / separationRadius);
+                        let strength = (separationRadius - dist) / separationRadius;
+
+                        // EXTRA repulsion from moving vehicles to prevent sticking
+                        if (other instanceof Vehicle && other.driver) {
+                            strength *= 5.0; // 5x force away from cars
+                        }
+
+                        push.multiplyScalar(strength);
                         separationForce.add(push);
                         nearbyCount++;
                     }
@@ -1397,7 +1460,7 @@ export class PathfindingSystem {
 
                 if (nearbyCount > 0) {
                     // Scale force by delta time and a strength factor
-                    separationForce.multiplyScalar(delta * 3.0);
+                    separationForce.multiplyScalar(delta * 4.0); // Increased base strength from 3.0
                     separationForce.y = 0; // Keep horizontal
                     agent.position.add(separationForce);
                 }
@@ -1658,12 +1721,29 @@ export class PathfindingSystem {
         const roadDebug = this.graph.createDebugVisualization();
         this.debugGroup.add(roadDebug);
 
-        this.parkingLegGroup = new THREE.Group();
-        this.parkingLegGroup.name = 'ParkingLegs';
-        this.debugGroup.add(this.parkingLegGroup);
-        this.parkingLegMaterial = new THREE.LineBasicMaterial({ color: 0x55d6ff });
-
         return this.debugGroup;
+    }
+
+    setParkingLegDebugEnabled(enabled: boolean) {
+        this.parkingLegDebugEnabled = enabled;
+        if (!this.debugGroup) return;
+        if (enabled) {
+            if (!this.parkingLegGroup) {
+                this.parkingLegGroup = new THREE.Group();
+                this.parkingLegGroup.name = 'ParkingLegs';
+                this.debugGroup.add(this.parkingLegGroup);
+                this.parkingLegMaterial = new THREE.LineBasicMaterial({ color: 0x55d6ff });
+            }
+        } else {
+            if (this.parkingLegGroup && this.parkingLegGroup.parent) {
+                this.parkingLegGroup.parent.remove(this.parkingLegGroup);
+            }
+            this.parkingLegGroup = null;
+            if (this.parkingLegMaterial) {
+                this.parkingLegMaterial.dispose();
+                this.parkingLegMaterial = null;
+            }
+        }
     }
 
     removeDebugVisualization() {

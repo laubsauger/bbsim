@@ -47,6 +47,7 @@ export class HeatmapField {
     private readonly palette: number[];
     private readonly dynamicRangeDecay: number;
     private readonly dynamicRangeFloor: number;
+    private readonly fixedScale?: number;
 
     private readonly canvas: HTMLCanvasElement;
     private readonly ctx: CanvasRenderingContext2D;
@@ -58,12 +59,13 @@ export class HeatmapField {
     private grid: Float32Array;
     private displayMax = 0;
 
-    constructor(config: HeatmapFieldConfig) {
+    constructor(config: HeatmapFieldConfig & { fixedScale?: number }) {
         this.id = config.id;
         this.bounds = config.bounds;
         this.palette = config.palette;
         this.dynamicRangeDecay = config.dynamicRangeDecay ?? 0.95;
         this.dynamicRangeFloor = config.dynamicRangeFloor ?? 0.01;
+        this.fixedScale = config.fixedScale;
 
         this.totalWidth = this.bounds.maxX - this.bounds.minX;
         this.totalHeight = this.bounds.maxY - this.bounds.minY;
@@ -91,7 +93,7 @@ export class HeatmapField {
             map: this.texture,
             transparent: true,
             opacity: config.opacity ?? 1,
-            depthTest: false,
+            depthTest: true,
             depthWrite: false,
         });
 
@@ -159,19 +161,24 @@ export class HeatmapField {
     }
 
     render() {
-        let maxValue = 0;
-        for (let i = 0; i < this.grid.length; i++) {
-            if (this.grid[i] > maxValue) maxValue = this.grid[i];
-        }
-
-        if (maxValue > 0) {
-            this.displayMax = Math.max(maxValue, this.displayMax * this.dynamicRangeDecay);
+        if (this.fixedScale !== undefined) {
+            this.displayMax = this.fixedScale;
         } else {
-            this.displayMax = this.displayMax * this.dynamicRangeDecay;
-        }
+            // Auto-exposure logic
+            let maxValue = 0;
+            for (let i = 0; i < this.grid.length; i++) {
+                if (this.grid[i] > maxValue) maxValue = this.grid[i];
+            }
 
-        if (this.displayMax < this.dynamicRangeFloor) {
-            this.displayMax = 0;
+            if (maxValue > 0) {
+                this.displayMax = Math.max(maxValue, this.displayMax * this.dynamicRangeDecay);
+            } else {
+                this.displayMax = this.displayMax * this.dynamicRangeDecay;
+            }
+
+            if (this.displayMax < this.dynamicRangeFloor) {
+                this.displayMax = 0;
+            }
         }
 
         const data = this.imageData.data;
