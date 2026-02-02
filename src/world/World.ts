@@ -1,7 +1,8 @@
-import { MapData, Lot, RoadSegment, LotUsage, LotState } from "../types";
+import { MapData, Lot, RoadSegment, LotUsage, LotState, Building } from "../types";
 
 export class World {
     lots: Lot[] = [];
+    buildings: Building[] = [];
     roads: RoadSegment[] = [];
     width: number = 0;
     height: number = 0;
@@ -10,13 +11,15 @@ export class World {
 
     load(data: MapData) {
         this.roads = data.road_segments;
+        this.buildings = data.buildings || [];
 
         // Specific lot assignments for key buildings
         // Map data is regenerated from SVGs, so avoid hardcoded lot IDs.
-        const specialLots = this.pickSpecialLots(data.lots);
+        const mergedLots = this.mergeChurchLots(data.lots);
+        const specialLots = this.pickSpecialLots(mergedLots);
 
         // Hydrate Lots with Simulation State
-        this.lots = data.lots.map(raw => {
+        this.lots = mergedLots.map(raw => {
             // Check for special lot assignments first
             const special = specialLots.get(raw.id);
             if (special) {
@@ -92,7 +95,34 @@ export class World {
         return this.lots.find(l => l.id === id);
     }
 
-    private pickSpecialLots(lots: Lot[]): Map<number, { usage: LotUsage; state: LotState }> {
+    private mergeChurchLots(lots: Omit<Lot, 'usage' | 'state'>[]): Omit<Lot, 'usage' | 'state'>[] {
+        const mainId = 556;
+        const mergeId = 195;
+        const main = lots.find(l => l.id === mainId);
+        const merge = lots.find(l => l.id === mergeId);
+        if (!main || !merge) return lots;
+
+        const xs = [...main.points, ...merge.points].map(p => p.x);
+        const ys = [...main.points, ...merge.points].map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        const merged = {
+            ...main,
+            points: [
+                { x: minX, y: minY },
+                { x: maxX, y: minY },
+                { x: maxX, y: maxY },
+                { x: minX, y: maxY }
+            ]
+        };
+
+        return lots.filter(l => l.id !== mergeId && l.id !== mainId).concat(merged);
+    }
+
+    private pickSpecialLots(lots: { id: number; points: { x: number; y: number }[] }[]): Map<number, { usage: LotUsage; state: LotState }> {
         const special = new Map<number, { usage: LotUsage; state: LotState }>();
         if (lots.length === 0) return special;
 

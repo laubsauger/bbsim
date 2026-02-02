@@ -410,6 +410,56 @@ console.log(`Initial Lot Count: ${lots.length}`);
 const uniqueLots = [];
 const discardedIndices = new Set();
 
+function clampLotBoundsToRoads(bounds) {
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+
+    let leftRoadEdge = null;
+    let rightRoadEdge = null;
+    let topRoadEdge = null;
+    let bottomRoadEdge = null;
+
+    for (const road of roadSegments) {
+        if (road.type === 'vertical') {
+            const leftEdge = road.x + road.width;
+            const rightEdge = road.x;
+            if (leftEdge <= centerX && (leftRoadEdge === null || leftEdge > leftRoadEdge)) {
+                leftRoadEdge = leftEdge;
+            }
+            if (rightEdge >= centerX && (rightRoadEdge === null || rightEdge < rightRoadEdge)) {
+                rightRoadEdge = rightEdge;
+            }
+        } else {
+            const topEdge = road.y + road.height;
+            const bottomEdge = road.y;
+            if (topEdge <= centerY && (topRoadEdge === null || topEdge > topRoadEdge)) {
+                topRoadEdge = topEdge;
+            }
+            if (bottomEdge >= centerY && (bottomRoadEdge === null || bottomEdge < bottomRoadEdge)) {
+                bottomRoadEdge = bottomEdge;
+            }
+        }
+    }
+
+    const minX = leftRoadEdge !== null ? leftRoadEdge : (viewBox ? viewBox.x : bounds.minX);
+    const maxX = rightRoadEdge !== null ? rightRoadEdge : (viewBox ? viewBox.x + viewBox.width : bounds.maxX);
+    const minY = topRoadEdge !== null ? topRoadEdge : (viewBox ? viewBox.y : bounds.minY);
+    const maxY = bottomRoadEdge !== null ? bottomRoadEdge : (viewBox ? viewBox.y + viewBox.height : bounds.maxY);
+
+    const inset = 1;
+    const clamped = {
+        minX: Math.min(Math.max(minX + inset, bounds.minX), maxX - inset),
+        maxX: Math.max(Math.min(maxX - inset, bounds.maxX), minX + inset),
+        minY: Math.min(Math.max(minY + inset, bounds.minY), maxY - inset),
+        maxY: Math.max(Math.min(maxY - inset, bounds.maxY), minY + inset),
+    };
+
+    if (clamped.maxX <= clamped.minX || clamped.maxY <= clamped.minY) {
+        return bounds;
+    }
+    return clamped;
+}
+
 for (let i = 0; i < lots.length; i++) {
     if (discardedIndices.has(i)) continue;
 
@@ -427,7 +477,7 @@ for (let i = 0; i < lots.length; i++) {
 
 lots.forEach((lot, index) => {
     if (!discardedIndices.has(index)) {
-        const bounds = getPolygonBounds(lot.geometry);
+        const bounds = clampLotBoundsToRoads(getPolygonBounds(lot.geometry));
         const rectPoints = [
             { x: bounds.minX, y: bounds.minY },
             { x: bounds.maxX, y: bounds.minY },

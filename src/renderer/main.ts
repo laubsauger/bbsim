@@ -35,6 +35,7 @@ async function init() {
     const world = new World();
     const agents: Agent[] = []; // Unified list
     let pathSystem: PathfindingSystem;
+    let mapTexturePlane: THREE.Mesh | null = null;
     let touristSystem: TouristSystem | null = null;
     let residentScheduleSystem: ResidentScheduleSystem | null = null;
     let addressSystem: AddressSystem;
@@ -568,6 +569,8 @@ async function init() {
         showDebugRoads: false,
         showDebugLots: false,
         showDebugBuildings: true,
+        showMapTexture: false,
+        renderBuildings: true,
     };
     debugFolder.add(debugConfig, 'showRoadGraph').name('Show Road Graph').onChange((show: boolean) => {
         if (show && pathSystem) {
@@ -600,6 +603,12 @@ async function init() {
     });
     debugFolder.add(debugConfig, 'showDebugBuildings').name('Debug Buildings').onChange((show: boolean) => {
         if (debugOverlays) debugOverlays.setVisible('debug_buildings', show);
+    });
+    debugFolder.add(debugConfig, 'renderBuildings').name('Render Meshes').onChange((show: boolean) => {
+        worldRenderer.setBuildingsVisible(show);
+    });
+    debugFolder.add(debugConfig, 'showMapTexture').name('Show Map Texture').onChange((show: boolean) => {
+        if (mapTexturePlane) mapTexturePlane.visible = show;
     });
 
     // --- 4. Logic ---
@@ -679,6 +688,11 @@ async function init() {
 
         world.load(mapData);
         worldRenderer.render(world);
+        mapTexturePlane = createMapTexturePlane(world);
+        if (mapTexturePlane) {
+            mapTexturePlane.visible = debugConfig.showMapTexture;
+            worldRenderer.group.add(mapTexturePlane);
+        }
         debugOverlays = createDebugOverlays(mapData);
         debugOverlays.setVisible('debug_roads', debugConfig.showDebugRoads);
         debugOverlays.setVisible('debug_lots', debugConfig.showDebugLots);
@@ -1059,3 +1073,44 @@ async function init() {
 }
 
 init();
+
+function createMapTexturePlane(world: World): THREE.Mesh | null {
+    const texturePath = '/docs/map/image_BB_map.png';
+    const loader = new THREE.TextureLoader();
+    const texture = loader.load(texturePath);
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    const roadBounds = world.roads.reduce(
+        (acc, r) => {
+            acc.minX = Math.min(acc.minX, r.x);
+            acc.maxX = Math.max(acc.maxX, r.x + r.width);
+            acc.minY = Math.min(acc.minY, r.y);
+            acc.maxY = Math.max(acc.maxY, r.y + r.height);
+            return acc;
+        },
+        { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
+    );
+
+    if (!isFinite(roadBounds.minX)) return null;
+
+    const width = roadBounds.maxX - roadBounds.minX;
+    const height = roadBounds.maxY - roadBounds.minY;
+    const centerX = roadBounds.minX + width / 2;
+    const centerY = roadBounds.minY + height / 2;
+
+    const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+        depthWrite: false
+    });
+    const geometry = new THREE.PlaneGeometry(width, height);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(centerX, 1.2, centerY);
+    mesh.renderOrder = 1;
+    return mesh;
+}

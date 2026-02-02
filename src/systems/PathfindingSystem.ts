@@ -200,7 +200,11 @@ export class PathfindingSystem {
         if (graphPath.length === 0 &&
             this.isOnSidewalk(startPoint.x, startPoint.y) &&
             this.isOnSidewalk(endPoint.x, endPoint.y)) {
-            return [this.toWorld(endPoint, 1)];
+            if (this.debugPathFailCount < 30) {
+                console.warn(`[PedestrianGraph] No sidewalk path from (${startPoint.x.toFixed(1)},${startPoint.y.toFixed(1)}) to (${endPoint.x.toFixed(1)},${endPoint.y.toFixed(1)})`);
+                this.debugPathFailCount++;
+            }
+            return [...prePath];
         }
 
         return [...prePath, ...graphPath, ...postPath];
@@ -1043,10 +1047,14 @@ export class PathfindingSystem {
                 const lateral = new THREE.Vector3(-forward.z, 0, forward.x);
                 for (const other of agents) {
                     if (agent === other) continue;
-                    if (other instanceof Vehicle && !other.driver) continue;
                     const distSq = agent.position.distanceToSquared(other.position);
                     if (distSq < avoidRadius * avoidRadius && distSq > 0.01) {
                         const d = Math.sqrt(distSq);
+                        if (d < minDist) {
+                            const push = new THREE.Vector3().subVectors(agent.position, other.position).normalize();
+                            push.multiplyScalar((minDist - d) * 0.6);
+                            agent.position.add(push);
+                        }
                         const factor = d <= minDist ? 0 : (d - minDist) / (avoidRadius - minDist);
                         speedFactor = Math.min(speedFactor, Math.max(0, Math.min(1, factor)));
 

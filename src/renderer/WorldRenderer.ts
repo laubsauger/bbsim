@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { World } from '../world/World';
-import { Lot, RoadSegment, LotState, LotUsage } from '../types';
+import { Lot, RoadSegment, LotState, LotUsage, Building } from '../types';
 
 // Terrain colors
 const TERRAIN_COLORS = {
@@ -28,6 +28,7 @@ export class WorldRenderer {
     scene: THREE.Scene;
     group: THREE.Group;
     worldCenterOffset: THREE.Vector3 = new THREE.Vector3();
+    buildingGroup?: THREE.Group;
 
     // Materials
     materials: Record<string, THREE.MeshStandardMaterial> = {};
@@ -84,6 +85,12 @@ export class WorldRenderer {
             color: LOT_BORDER_COLORS.vacant,
             linewidth: 1,
         });
+
+        this.materials['building'] = new THREE.MeshStandardMaterial({
+            color: 0xE6E0D4, // Almond/Bone
+            roughness: 0.8,
+            metalness: 0.0,
+        });
     }
 
     public getLotMaterialPublic(lot: Lot): THREE.MeshStandardMaterial {
@@ -135,6 +142,7 @@ export class WorldRenderer {
         this.renderGround(world);
         this.renderRoads(world.roads);
         this.renderLots(world.lots);
+        this.renderBuildings(world.buildings || []);
         this.renderNorthIndicator(world);
 
         // Center the group - compute center from the bounding box
@@ -359,5 +367,69 @@ export class WorldRenderer {
             mesh.name = `Road ${seg.x},${seg.y}`;
             this.group.add(mesh);
         });
+    }
+    private renderBuildings(buildings: Building[]) {
+        const buildingGroup = new THREE.Group();
+        buildingGroup.name = 'Buildings';
+        buildingGroup.visible = true;
+
+        buildings.forEach(building => {
+            if (building.points.length < 3) return;
+
+            const minX = Math.min(...building.points.map(p => p.x));
+            const maxX = Math.max(...building.points.map(p => p.x));
+            const minY = Math.min(...building.points.map(p => p.y));
+            const maxY = Math.max(...building.points.map(p => p.y));
+            const width = maxX - minX;
+            const height = maxY - minY;
+            const centerX = minX + width / 2;
+            const centerY = minY + height / 2;
+
+            const shape = new THREE.Shape();
+            // Rotate 180 degrees by negating both x and y relative to center
+            // This aligns the mesh with the debug overlay which maps Y -> Z
+            shape.moveTo(-(building.points[0].x - centerX), -(building.points[0].y - centerY));
+            for (let i = 1; i < building.points.length; i++) {
+                shape.lineTo(-(building.points[i].x - centerX), -(building.points[i].y - centerY));
+            }
+            shape.closePath();
+
+            // Height calculation with variance
+            // Seed based on ID for stability
+            const seed = building.id * 12.345;
+            const r = Math.abs(Math.sin(seed));
+
+            // 95% single story (18-24 units), 5% double story (40-45 units)
+            // Mobile homes are often low
+            let buildingHeight = 18 + r * 6;
+            if (r > 0.95) buildingHeight = 40 + (r - 0.95) * 100;
+
+            const geometry = new THREE.ExtrudeGeometry(shape, {
+                steps: 1,
+                depth: buildingHeight,
+                bevelEnabled: false,
+            });
+
+            const mesh = new THREE.Mesh(geometry, this.materials['building']);
+            mesh.name = `Building ${building.id}`;
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+
+            // Positioning
+            mesh.rotation.x = -Math.PI / 2;
+            // Place on top of lots (y=2)
+            mesh.position.set(centerX, 2, centerY);
+
+            buildingGroup.add(mesh);
+        });
+
+        this.group.add(buildingGroup);
+        this.buildingGroup = buildingGroup;
+    }
+
+    public setBuildingsVisible(visible: boolean) {
+        if (this.buildingGroup) {
+            this.buildingGroup.visible = visible;
+        }
     }
 }
