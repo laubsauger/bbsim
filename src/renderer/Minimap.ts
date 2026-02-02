@@ -45,6 +45,7 @@ export class Minimap {
     private cachedBackground: ImageData | null = null;
     private mode: MinimapMode = 'overlay';
     private modeToggle: HTMLButtonElement | null = null;
+    private baseBottom = 56;
 
     constructor(controls: OrbitControls, camera: THREE.Camera) {
         this.controls = controls;
@@ -54,7 +55,7 @@ export class Minimap {
         this.canvas.width = this.width;
         this.canvas.height = this.height;
         this.canvas.style.position = 'absolute';
-        this.canvas.style.bottom = '12px';
+        this.canvas.style.bottom = `${this.baseBottom}px`;
         this.canvas.style.left = '12px';
         this.canvas.style.border = '1px solid #3D3530';
         this.canvas.style.backgroundColor = MINIMAP_COLORS.background;
@@ -78,7 +79,7 @@ export class Minimap {
         this.modeToggle.title = 'Toggle minimap mode (overlay/grid)';
         this.modeToggle.style.cssText = `
             position: absolute;
-            bottom: ${12 + this.height - 26}px;
+            bottom: ${this.baseBottom + this.height - 26}px;
             left: ${12 + this.width - 26}px;
             width: 22px;
             height: 22px;
@@ -112,11 +113,11 @@ export class Minimap {
 
         const scaleX = this.width / w;
         const scaleY = this.height / h;
-        this.scale = Math.min(scaleX, scaleY) * 0.94; // Maximize map area
+        this.scale = Math.min(scaleX, scaleY) * 0.99; // Maximize map area
 
         // Center offset (minimal padding for north arrow)
         this.offsetX = (this.width - w * this.scale) / 2;
-        this.offsetY = (this.height - h * this.scale) / 2 + 4; // Small shift for north arrow
+        this.offsetY = (this.height - h * this.scale) / 2; // Small shift for north arrow
 
         this.renderStaticBackground();
     }

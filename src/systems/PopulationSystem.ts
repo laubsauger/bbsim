@@ -245,14 +245,7 @@ export class PopulationSystem {
         return null;
     }
 
-    private getStreetParkingSpot(lot: Lot): { x: number; y: number; rotation: number } | null {
-        if (!lot.roadAccessPoint) return null;
-        return {
-            x: lot.roadAccessPoint.x,
-            y: lot.roadAccessPoint.y,
-            rotation: 0
-        };
-    }
+
 
     /**
      * Release a parking spot when a vehicle leaves

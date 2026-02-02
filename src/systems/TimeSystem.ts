@@ -1,7 +1,15 @@
+import SunCalc from 'suncalc';
 import { GameTime } from "../types";
+
+// Bombay Beach coordinates
+const LAT = 33.3528;
+const LNG = -115.7339;
 
 export class TimeSystem {
     public time: GameTime;
+    public sunPosition: { azimuth: number; altitude: number } = { azimuth: 0, altitude: 0 };
+    public moonPosition: { azimuth: number; altitude: number } = { azimuth: 0, altitude: 0 };
+    public phase: number = 0; // Moon phase
 
     constructor() {
         this.time = {
@@ -11,6 +19,7 @@ export class TimeSystem {
             minute: 0,
             speed: 60 // 1 real sec = 1 game minute
         };
+        this.updateSunPosition();
     }
 
     update(delta: number) {
@@ -25,6 +34,25 @@ export class TimeSystem {
 
         this.time.hour = Math.floor(this.time.totalSeconds / 3600);
         this.time.minute = Math.floor((this.time.totalSeconds % 3600) / 60);
+
+        this.updateSunPosition();
+    }
+
+    private updateSunPosition() {
+        // Map GameTime to a mock Date object for SunCalc
+        // We assume Day 1 is June 21, 2026 (Summer Solstice) for interesting light
+        const baseDate = new Date('2026-06-21T00:00:00');
+        const msInDay = this.time.totalSeconds * 1000;
+        const currentMs = baseDate.getTime() + (this.time.day - 1) * 86400000 + msInDay;
+        const date = new Date(currentMs);
+
+        const sunPos = SunCalc.getPosition(date, LAT, LNG);
+        const moonPos = SunCalc.getMoonPosition(date, LAT, LNG);
+        const moonIllum = SunCalc.getMoonIllumination(date);
+
+        this.sunPosition = { azimuth: sunPos.azimuth, altitude: sunPos.altitude };
+        this.moonPosition = { azimuth: moonPos.azimuth, altitude: moonPos.altitude };
+        this.phase = moonIllum.phase;
     }
 
     getTimeString(): string {

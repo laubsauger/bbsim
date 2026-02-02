@@ -29,6 +29,7 @@ import { EventLog, LogLocation } from '../ui/EventLog';
 import { SchoolBus } from '../entities/SchoolBus';
 import { TrafficOverlay } from './TrafficOverlay';
 import { WifiOverlay } from './WifiOverlay';
+import { DayNightCycle } from './DayNightCycle';
 
 async function init() {
     // --- 1. Systems Setup ---
@@ -53,7 +54,7 @@ async function init() {
     scene.background = new THREE.Color(0x000000); // Black background
     scene.fog = new THREE.Fog(0x111111, 5000, 15000); // Dark fog
 
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 50, 20000);
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 20000);
     // Position camera south of the world, looking north (World is 0-2000 in Z)
     // Center is roughly (1000, 0, 1000)
     camera.position.set(1000, 2000, 3500);  // South of the map (Z > 2000)
@@ -154,8 +155,18 @@ async function init() {
     fillLight.position.set(-1500, 2000, -1000);
     scene.add(fillLight);
 
+    // Day/Night Cycle System (optional, linked to game clock)
+    const dayNightCycle = new DayNightCycle(scene, sunLight, ambientLight, hemiLight);
+    dayNightCycle.setEnabled(false); // Disabled by default
+
     const stats = new Stats();
     document.body.appendChild(stats.dom);
+    stats.dom.style.cssText = `
+        position: absolute;
+        left: 12px;
+        bottom: 12px;
+        z-index: 120;
+    `;
 
     const worldRenderer = new WorldRenderer(scene);
     const selectionHighlighter = new SelectionHighlighter(worldRenderer.group);
@@ -226,8 +237,8 @@ async function init() {
     const legend = document.createElement('div');
     legend.style.cssText = `
         position: absolute;
-        bottom: 320px;
-        left: 12px;
+        top: 72px;
+        right: 12px;
         background: rgba(30, 25, 20, 0.9);
         color: #CCC;
         padding: 8px 12px;
@@ -235,6 +246,7 @@ async function init() {
         font-family: system-ui, sans-serif;
         font-size: 10px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        max-width: 360px;
     `;
     legend.innerHTML = `
         <div style="margin-bottom: 6px;">
@@ -540,6 +552,8 @@ async function init() {
         },
         onToggleMinimap: (visible) => {
             minimap.setVisible(visible);
+        },
+        onToggleLegend: (visible) => {
             legend.style.display = visible ? 'block' : 'none';
         },
         onToggleExplorer: (visible) => {
@@ -584,6 +598,22 @@ async function init() {
     timeFolder.add(timeDisplay, 'str').name('Clock').disable().listen();
     topbar.setTimeLabel(timeDisplay.str);
     topbar.setSpeed(state.timeSpeed);
+
+    // Day/Night Cycle toggle
+    const cycleConfig = {
+        dayNightCycle: false,
+        useCustomTime: false,
+        customHour: 12
+    };
+    timeFolder.add(cycleConfig, 'dayNightCycle').name('Day/Night Cycle').onChange((enabled: boolean) => {
+        dayNightCycle.setEnabled(enabled);
+    });
+    timeFolder.add(cycleConfig, 'useCustomTime').name('Custom Time').onChange((enabled: boolean) => {
+        dayNightCycle.useCustomTime = enabled;
+    });
+    timeFolder.add(cycleConfig, 'customHour', 0, 24, 0.5).name('Hour of Day').onChange((hour: number) => {
+        dayNightCycle.customHour = hour;
+    });
 
     const simFolder = gui.addFolder('Simulation');
     const simConfig = { residentCount: 250, touristCount: 30 };
@@ -936,6 +966,9 @@ async function init() {
             timeSystem.update(delta);
             timeDisplay.str = timeSystem.getTimeString();
             topbar.setTimeLabel(timeDisplay.str);
+
+            // Update day/night lighting based on game time
+            dayNightCycle.update(timeSystem);
 
             if (pathSystem) {
                 // Scale movement by Time Speed

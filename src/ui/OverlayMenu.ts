@@ -77,8 +77,8 @@ export class OverlayMenu {
             style.textContent = `
                 .overlay-menu {
                     position: absolute;
-                    top: 80px;
-                    left: 20px;
+                    top: 64px;
+                    left: 12px;
                     display: flex;
                     flex-direction: column;
                     gap: 8px;
@@ -158,8 +158,8 @@ export class OverlayMenu {
 
         this.container.style.cssText = `
             position: absolute;
-            top: 80px;
-            left: 20px;
+            top: 64px;
+            left: 12px;
             display: flex;
             flex-direction: column;
             gap: 8px;

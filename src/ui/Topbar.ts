@@ -3,6 +3,7 @@ export type FocusMode = 'jump' | 'follow' | 'both';
 export interface TopbarConfig {
     onToggleOverlay?: (visible: boolean) => void;
     onToggleMinimap?: (visible: boolean) => void;
+    onToggleLegend?: (visible: boolean) => void;
     onToggleExplorer?: (visible: boolean) => void;
     onToggleEventLog?: (visible: boolean) => void;
     onToggleHighlights?: (enabled: boolean) => void;
@@ -19,6 +20,7 @@ export class Topbar {
     private speedInput: HTMLInputElement;
     private overlayToggle: HTMLButtonElement;
     private minimapToggle: HTMLButtonElement;
+    private legendToggle: HTMLButtonElement;
     private explorerToggle: HTMLButtonElement;
     private eventLogToggle: HTMLButtonElement;
     private highlightToggle: HTMLButtonElement;
@@ -32,6 +34,7 @@ export class Topbar {
     private state = {
         overlayVisible: true,
         minimapVisible: true,
+        legendVisible: true,
         explorerVisible: true,
         eventLogVisible: true,
         highlightsEnabled: true,
@@ -43,6 +46,7 @@ export class Topbar {
 
     private onToggleOverlay?: (visible: boolean) => void;
     private onToggleMinimap?: (visible: boolean) => void;
+    private onToggleLegend?: (visible: boolean) => void;
     private onToggleExplorer?: (visible: boolean) => void;
     private onToggleEventLog?: (visible: boolean) => void;
     private onToggleHighlights?: (enabled: boolean) => void;
@@ -54,6 +58,7 @@ export class Topbar {
     constructor(config: TopbarConfig = {}) {
         this.onToggleOverlay = config.onToggleOverlay;
         this.onToggleMinimap = config.onToggleMinimap;
+        this.onToggleLegend = config.onToggleLegend;
         this.onToggleExplorer = config.onToggleExplorer;
         this.onToggleEventLog = config.onToggleEventLog;
         this.onToggleHighlights = config.onToggleHighlights;
@@ -70,6 +75,7 @@ export class Topbar {
             <div class="topbar__group">
                 <button class="topbar__btn" data-action="overlay">Overlays</button>
                 <button class="topbar__btn" data-action="minimap">Minimap</button>
+                <button class="topbar__btn" data-action="legend">Legend</button>
                 <button class="topbar__btn" data-action="explorer">Explorer</button>
                 <button class="topbar__btn" data-action="events">Events</button>
             </div>
@@ -120,6 +126,7 @@ export class Topbar {
         this.speedInput = this.container.querySelector('.topbar__speed-input') as HTMLInputElement;
         this.overlayToggle = this.container.querySelector('[data-action="overlay"]') as HTMLButtonElement;
         this.minimapToggle = this.container.querySelector('[data-action="minimap"]') as HTMLButtonElement;
+        this.legendToggle = this.container.querySelector('[data-action="legend"]') as HTMLButtonElement;
         this.explorerToggle = this.container.querySelector('[data-action="explorer"]') as HTMLButtonElement;
         this.eventLogToggle = this.container.querySelector('[data-action="events"]') as HTMLButtonElement;
         this.highlightToggle = this.container.querySelector('[data-action="highlights"]') as HTMLButtonElement;
@@ -147,6 +154,7 @@ export class Topbar {
 
         this.overlayToggle.addEventListener('click', () => this.setOverlayVisible(!this.state.overlayVisible, true));
         this.minimapToggle.addEventListener('click', () => this.setMinimapVisible(!this.state.minimapVisible, true));
+        this.legendToggle.addEventListener('click', () => this.setLegendVisible(!this.state.legendVisible, true));
         this.explorerToggle.addEventListener('click', () => this.setExplorerVisible(!this.state.explorerVisible, true));
         this.eventLogToggle.addEventListener('click', () => this.setEventLogVisible(!this.state.eventLogVisible, true));
         this.highlightToggle.addEventListener('click', () => this.setHighlightsEnabled(!this.state.highlightsEnabled, true));
@@ -217,6 +225,12 @@ export class Topbar {
         if (emit && this.onToggleMinimap) this.onToggleMinimap(visible);
     }
 
+    setLegendVisible(visible: boolean, emit: boolean = false) {
+        this.state.legendVisible = visible;
+        this.legendToggle.classList.toggle('active', visible);
+        if (emit && this.onToggleLegend) this.onToggleLegend(visible);
+    }
+
     setExplorerVisible(visible: boolean, emit: boolean = false) {
         this.state.explorerVisible = visible;
         this.explorerToggle.classList.toggle('active', visible);
@@ -248,6 +262,7 @@ export class Topbar {
     private syncButtons() {
         this.setOverlayVisible(this.state.overlayVisible);
         this.setMinimapVisible(this.state.minimapVisible);
+        this.setLegendVisible(this.state.legendVisible);
         this.setExplorerVisible(this.state.explorerVisible);
         this.setEventLogVisible(this.state.eventLogVisible);
         this.setHighlightsEnabled(this.state.highlightsEnabled);

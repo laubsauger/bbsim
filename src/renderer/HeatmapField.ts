@@ -93,7 +93,7 @@ export class HeatmapField {
             map: this.texture,
             transparent: true,
             opacity: config.opacity ?? 1,
-            depthTest: true,
+            depthTest: false,
             depthWrite: false,
         });
 

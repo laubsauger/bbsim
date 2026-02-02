@@ -110,6 +110,17 @@ export class Vehicle extends Agent {
         this.mesh = bodyMesh; // Keep reference for raycasting
         this.meshHeight = bodyHeight;
 
+        // Render Order Logic:
+        // Map/Buildings = 0 (Default)
+        // TrafficOverlay = 1000 (Transparent, No Depth)
+        // Vehicles = 2000 (To draw ON TOP of overlay)
+        this.mesh.renderOrder = 2000;
+        this.carGroup.renderOrder = 2000;
+        // Propagate renderOrder to children
+        this.carGroup.traverse((child) => {
+            child.renderOrder = 2000;
+        });
+
         // Override userData
         this.mesh.userData = { type: 'vehicle', data: this };
         const ownerType = this.isPoliceCar ? 'Police' : (isTourist ? 'Tourist' : 'Resident');

@@ -130,6 +130,7 @@ export class Resident extends Agent {
         // Update mesh userData
         this.mesh.userData = { type: 'resident', data: this };
         this.mesh.name = `${data.firstName} ${data.lastName}`;
+        this.mesh.renderOrder = 2000;
 
         // Randomize initial idle timer so not everyone leaves at once
         this.idleTimer = Math.random() * 30; // 0-30 seconds before first decision
@@ -315,7 +316,7 @@ export class Resident extends Agent {
         // Generate chronotype with age bias (older = earlier riser)
         const chronotypeRoll = Math.random() + (age > 60 ? 0.3 : 0) - (age < 30 ? 0.2 : 0);
         const chronotype = chronotypeRoll > 0.7 ? Chronotype.EARLY_BIRD :
-                          chronotypeRoll < 0.3 ? Chronotype.NIGHT_OWL : Chronotype.NORMAL;
+            chronotypeRoll < 0.3 ? Chronotype.NIGHT_OWL : Chronotype.NORMAL;
 
         // Generate work schedule based on occupation and age
         let workSchedule: WorkSchedule;
@@ -336,8 +337,8 @@ export class Resident extends Agent {
         // Generate lifestyle
         const lifestyleRoll = Math.random();
         const lifestyle = lifestyleRoll < 0.25 ? Lifestyle.HOMEBODY :
-                         lifestyleRoll < 0.5 ? Lifestyle.SOCIAL_BUTTERFLY :
-                         lifestyleRoll < 0.65 ? Lifestyle.WORKAHOLIC : Lifestyle.BALANCED;
+            lifestyleRoll < 0.5 ? Lifestyle.SOCIAL_BUTTERFLY :
+                lifestyleRoll < 0.65 ? Lifestyle.WORKAHOLIC : Lifestyle.BALANCED;
 
         // Calculate wake/sleep times based on chronotype with individual variation
         const variation = () => (Math.random() - 0.5) * 1.5; // +/- 45 minutes

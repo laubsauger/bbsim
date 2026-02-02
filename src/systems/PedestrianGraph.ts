@@ -43,7 +43,7 @@ export class PedestrianGraph {
     }
 
     private buildGraph(roads: RoadSegment[]) {
-        const nodeSpacing = 50;
+        const nodeSpacing = 150; // Increased from 50 to reduce density
         const sidewalkLines: SidewalkLine[] = [];
 
         roads.forEach((road, index) => {
@@ -134,8 +134,7 @@ export class PedestrianGraph {
         });
 
         // Add crosswalk connections at road intersections
-        // Connect sidewalks across roads so pedestrians can cross
-        this.addCrosswalks(roads, sidewalkLines);
+        this.addCrosswalks(roads);
 
         // Snap-close nodes for connectivity
         const snapDistance = 28;
@@ -152,35 +151,48 @@ export class PedestrianGraph {
         }
     }
 
-    private addCrosswalks(roads: RoadSegment[], sidewalkLines: SidewalkLine[]) {
-        // For each road, add crossings connecting sidewalks on opposite sides
-        roads.forEach((road, index) => {
+    private addCrosswalks(roads: RoadSegment[]) {
+        // Connect nodes on opposite sides of the road directly
+        const nodes = Array.from(this.nodes.values());
+
+        roads.forEach(road => {
+            const tolerance = 5; // Alignment tolerance
+
             if (road.type === 'vertical') {
-                // Connect left and right sidewalks at regular intervals
                 const leftX = road.x - this.offset;
                 const rightX = road.x + road.width + this.offset;
-                const crossingInterval = 200;
 
-                for (let y = road.y; y <= road.y + road.height; y += crossingInterval) {
-                    const leftNode = this.getClosestNode({ x: leftX, y });
-                    const rightNode = this.getClosestNode({ x: rightX, y });
-                    if (leftNode && rightNode && leftNode.id !== rightNode.id) {
-                        this.addEdge(leftNode.id, rightNode.id);
-                    }
-                }
+                // Find all nodes on the left sidewalk
+                const leftNodes = nodes.filter(n => Math.abs(n.x - leftX) < 1 && n.y >= road.y && n.y <= road.y + road.height);
+
+                leftNodes.forEach(ln => {
+                    // Find matching node on the right sidewalk (same Y)
+                    const matches = nodes.filter(rn =>
+                        Math.abs(rn.x - rightX) < 1 &&
+                        Math.abs(rn.y - ln.y) < tolerance
+                    );
+                    matches.forEach(rn => {
+                        this.addEdge(ln.id, rn.id);
+                    });
+                });
+
             } else {
-                // Connect top and bottom sidewalks at regular intervals
                 const topY = road.y - this.offset;
                 const bottomY = road.y + road.height + this.offset;
-                const crossingInterval = 200;
 
-                for (let x = road.x; x <= road.x + road.width; x += crossingInterval) {
-                    const topNode = this.getClosestNode({ x, y: topY });
-                    const bottomNode = this.getClosestNode({ x, y: bottomY });
-                    if (topNode && bottomNode && topNode.id !== bottomNode.id) {
-                        this.addEdge(topNode.id, bottomNode.id);
-                    }
-                }
+                // Find all nodes on the top sidewalk
+                const topNodes = nodes.filter(n => Math.abs(n.y - topY) < 1 && n.x >= road.x && n.x <= road.x + road.width);
+
+                topNodes.forEach(tn => {
+                    // Find matching node on the bottom sidewalk (same X)
+                    const matches = nodes.filter(bn =>
+                        Math.abs(bn.y - bottomY) < 1 &&
+                        Math.abs(bn.x - tn.x) < tolerance
+                    );
+                    matches.forEach(bn => {
+                        this.addEdge(tn.id, bn.id);
+                    });
+                });
             }
         });
     }

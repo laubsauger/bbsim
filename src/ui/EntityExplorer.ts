@@ -106,7 +106,7 @@ export class EntityExplorer {
     private touristById: Map<string, Tourist> = new Map();
     private selected: ExplorerEntityRef | null = null;
     private onSelect?: (entity: ExplorerEntityRef | null) => void;
-    private collapsed: boolean = false;
+    private collapsed: boolean = true;
 
     constructor(config: EntityExplorerConfig = {}) {
         this.onSelect = config.onSelect;
@@ -163,6 +163,9 @@ export class EntityExplorer {
         collapseBtn.addEventListener('click', () => {
             this.setCollapsed(!this.collapsed);
         });
+
+        // Apply initial collapsed state
+        this.setCollapsed(this.collapsed);
 
         this.results.addEventListener('click', (event) => {
             const target = event.target as HTMLElement;

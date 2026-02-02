@@ -900,15 +900,24 @@ export class PathfindingSystem {
                 x = road.x + curbInset;
                 y = Math.max(road.y + edgeMargin, Math.min(point.y + offset, road.y + road.height - edgeMargin));
                 rotation = 0;
-                y = this.avoidIntersectionOnRoad(road, x, y, intersectionClear);
+                // Force check against intersections
+                if (this.isNearIntersection(x, y, 8)) {
+                    const adjusted = this.adjustPointIfInIntersection({ x, y }, 12);
+                    y = adjusted.y;
+                }
             } else {
                 y = road.y + curbInset;
                 x = Math.max(road.x + edgeMargin, Math.min(point.x + offset, road.x + road.width - edgeMargin));
                 rotation = Math.PI / 2;
-                x = this.avoidIntersectionOnRoad(road, x, y, intersectionClear);
+                // Force check against intersections
+                if (this.isNearIntersection(x, y, 8)) {
+                    const adjusted = this.adjustPointIfInIntersection({ x, y }, 12);
+                    x = adjusted.x;
+                }
             }
 
-            if (this.isNearIntersection(x, y, intersectionClear)) {
+            // Double check final pos
+            if (this.isNearIntersection(x, y, 50)) {
                 continue;
             }
 
@@ -1853,4 +1862,6 @@ export class PathfindingSystem {
         }
         return lot.parkingSpots.filter(spot => spot.occupiedBy === null).length;
     }
+
+
 }

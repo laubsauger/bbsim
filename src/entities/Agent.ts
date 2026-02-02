@@ -93,10 +93,10 @@ export class Agent {
             direction.y = 0; // Keep movement horizontal
             const dist = direction.length();
 
-            if (dist < 2) {
+            if (dist < 1.0) { // Tighter acceptance radius to hit nodes precisely
                 this.position.copy(this.target);
                 this.target = null;
-                this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 2 * delta); // Decelerate
+                this.currentSpeed = 0; // Stop on arrival to allow next-target turn
             } else {
                 // Calculate target rotation based on movement direction
                 this.targetRotation = Math.atan2(direction.x, direction.z);
@@ -107,15 +107,29 @@ export class Agent {
                 while (rotationDiff > Math.PI) rotationDiff -= Math.PI * 2;
                 while (rotationDiff < -Math.PI) rotationDiff += Math.PI * 2;
 
-                this.mesh.rotation.y += rotationDiff * Math.min(1, this.rotationSpeed * delta);
+                const turnStep = rotationDiff * Math.min(1, this.rotationSpeed * delta);
+                this.mesh.rotation.y += turnStep;
 
-                const targetSpeed = this.speed * this.speedModifier;
+                // --- ROTATE THEN MOVE LOGIC ---
+                // Only move if we are roughly facing the target (within ~30 degrees)
+                // This forces the agent to turn in place (or very slowly) at corners
+                const isFacing = Math.abs(rotationDiff) < 0.5;
+
+                const targetSpeed = isFacing ? this.speed * this.speedModifier : this.speed * 0.1;
+
                 // Accelerate toward target speed
-                this.currentSpeed = Math.min(targetSpeed, this.currentSpeed + this.speed * 2 * delta * this.speedModifier);
+                const acc = this.speed * 4 * delta;
+                if (this.currentSpeed < targetSpeed) {
+                    this.currentSpeed = Math.min(targetSpeed, this.currentSpeed + acc);
+                } else {
+                    this.currentSpeed = Math.max(targetSpeed, this.currentSpeed - acc);
+                }
 
-                // Move forward
-                direction.normalize();
-                this.position.add(direction.multiplyScalar(this.currentSpeed * delta));
+                // Move forward only if we have speed
+                if (this.currentSpeed > 0.01) {
+                    direction.normalize();
+                    this.position.add(direction.multiplyScalar(this.currentSpeed * delta));
+                }
             }
             this.updateMesh();
         } else {
