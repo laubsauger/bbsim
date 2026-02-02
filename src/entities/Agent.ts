@@ -31,6 +31,9 @@ export class Agent {
     targetRotation: number = 0; // Target Y rotation
     rotationSpeed: number = 5; // How fast to turn (radians per second)
 
+    // Pre-allocated vectors for update() to avoid GC pressure
+    protected _direction: THREE.Vector3 = new THREE.Vector3();
+
     constructor(config: AgentConfig) {
         this.id = config.id;
         this.type = config.type;
@@ -89,9 +92,9 @@ export class Agent {
                 if (this.recentPath.length > 50) this.recentPath.shift();
             }
 
-            const direction = new THREE.Vector3().subVectors(this.target, this.position);
-            direction.y = 0; // Keep movement horizontal
-            const dist = direction.length();
+            this._direction.subVectors(this.target, this.position);
+            this._direction.y = 0; // Keep movement horizontal
+            const dist = this._direction.length();
 
             if (dist < 1.0) { // Tighter acceptance radius to hit nodes precisely
                 this.position.copy(this.target);
@@ -99,7 +102,7 @@ export class Agent {
                 this.currentSpeed = 0; // Stop on arrival to allow next-target turn
             } else {
                 // Calculate target rotation based on movement direction
-                this.targetRotation = Math.atan2(direction.x, direction.z);
+                this.targetRotation = Math.atan2(this._direction.x, this._direction.z);
 
                 // Smoothly interpolate rotation
                 let rotationDiff = this.targetRotation - this.mesh.rotation.y;
@@ -127,8 +130,8 @@ export class Agent {
 
                 // Move forward only if we have speed
                 if (this.currentSpeed > 0.01) {
-                    direction.normalize();
-                    this.position.add(direction.multiplyScalar(this.currentSpeed * delta));
+                    this._direction.normalize();
+                    this.position.add(this._direction.multiplyScalar(this.currentSpeed * delta));
                 }
             }
             this.updateMesh();

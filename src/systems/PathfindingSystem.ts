@@ -4,6 +4,7 @@ import { RoadGraph } from "./RoadGraph";
 import { Resident, ResidentState } from '../entities/Resident';
 import { PedestrianGraph } from './PedestrianGraph';
 import { Vehicle } from '../entities/Vehicle';
+import { SpatialGrid } from './SpatialGrid';
 
 export class PathfindingSystem {
     roads: RoadSegment[];
@@ -24,6 +25,7 @@ export class PathfindingSystem {
     private parkingLegMaterial: THREE.LineBasicMaterial | null = null;
     private parkingLegDebugEnabled = false;
     private intersectionRects: Array<{ minX: number; minY: number; maxX: number; maxY: number }> = [];
+    private spatialGrid: SpatialGrid<any> = new SpatialGrid(50); // 50 units per cell
 
     constructor(roads: RoadSegment[]) {
         this.roads = roads;
@@ -96,6 +98,16 @@ export class PathfindingSystem {
             }
         }
         return rects;
+    }
+
+    /**
+     * Get center points of all intersections (for street lamp placement, etc.)
+     */
+    getIntersectionCenters(): { x: number; y: number }[] {
+        return this.intersectionRects.map(rect => ({
+            x: (rect.minX + rect.maxX) / 2,
+            y: (rect.minY + rect.maxY) / 2
+        }));
     }
 
     private isNearIntersection(x: number, y: number, clearance: number): boolean {
@@ -1182,6 +1194,10 @@ export class PathfindingSystem {
         if (this.parkingLegGroup) {
             this.updateParkingLegDebug(agents);
         }
+
+        // Populate spatial grid for efficient nearby queries (O(n) instead of O(n²))
+        this.spatialGrid.populate(agents);
+
         agents.forEach(agent => {
             const isPedestrian = this.isPedestrian(agent);
             const lotBefore = isPedestrian ? this.findLotContainingPoint(this.toSvg(agent.position), this.lots) : null;
@@ -1248,7 +1264,9 @@ export class PathfindingSystem {
                 const lateral = new THREE.Vector3(-forward.z, 0, forward.x);
                 let blocking = false;
                 let blockedByParked = false;
-                for (const other of agents) {
+                // Use spatial grid for O(1) nearby lookup instead of O(n)
+                const nearbyAgents = this.spatialGrid.getNearby(agent.position.x, agent.position.z, avoidRadius);
+                for (const other of nearbyAgents) {
                     if (agent === other) continue;
                     const distSq = agent.position.distanceToSquared(other.position);
                     if (distSq < avoidRadius * avoidRadius && distSq > 0.01) {
@@ -1303,7 +1321,9 @@ export class PathfindingSystem {
                             let laneClear = true;
                             const aheadDist = 40;
                             const behindDist = 18;
-                            for (const other of agents) {
+                            // Use spatial grid for lane checking
+                            const nearbyForLane = this.spatialGrid.getNearby(agent.position.x, agent.position.z, aheadDist);
+                            for (const other of nearbyForLane) {
                                 if (other === agent) continue;
                                 if (!(other instanceof Vehicle)) continue;
                                 if (!other.driver) continue;
@@ -1439,7 +1459,9 @@ export class PathfindingSystem {
                 const separationForce = new THREE.Vector3();
                 let nearbyCount = 0;
 
-                for (const other of agents) {
+                // Use spatial grid for O(1) nearby lookup instead of O(n)
+                const nearbyForSeparation = this.spatialGrid.getNearby(agent.position.x, agent.position.z, separationRadius);
+                for (const other of nearbyForSeparation) {
                     if (agent === other) continue;
                     // Ignore parked cars for separation
                     if (other instanceof Vehicle && !other.driver) continue;

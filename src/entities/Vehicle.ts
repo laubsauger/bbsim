@@ -165,9 +165,10 @@ export class Vehicle extends Agent {
                 if (this.recentPath.length > 50) this.recentPath.shift();
             }
 
-            const direction = new THREE.Vector3().subVectors(this.target, this.position);
-            direction.y = 0; // Keep movement horizontal
-            const dist = direction.length();
+            // Use inherited pre-allocated vector to avoid GC pressure
+            this._direction.subVectors(this.target, this.position);
+            this._direction.y = 0; // Keep movement horizontal
+            const dist = this._direction.length();
 
             if (dist < 3) {
                 this.position.copy(this.target);
@@ -175,16 +176,16 @@ export class Vehicle extends Agent {
                 this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 2 * delta);
             } else {
                 // Calculate target rotation based on movement direction
-                this.targetRotation = Math.atan2(direction.x, direction.z);
+                this.targetRotation = Math.atan2(this._direction.x, this._direction.z);
 
                 // Accelerate toward target speed (with dynamic modifier)
                 const desiredSpeed = this.speed * Math.max(0, Math.min(1, this.speedModifier));
                 this.currentSpeed = Math.min(desiredSpeed, this.currentSpeed + this.speed * 2 * delta);
 
                 // Move forward without overshooting the target
-                direction.normalize();
+                this._direction.normalize();
                 const step = Math.min(dist, this.currentSpeed * delta);
-                this.position.add(direction.multiplyScalar(step));
+                this.position.add(this._direction.multiplyScalar(step));
             }
         } else {
             // No target - decelerate

@@ -1,5 +1,10 @@
 import * as THREE from 'three';
+import SunCalc from 'suncalc';
 import { TimeSystem } from '../systems/TimeSystem';
+
+// Bombay Beach coordinates
+const LAT = 33.3528;
+const LNG = -115.7339;
 
 // World center for calculating light positions
 const WORLD_CENTER = new THREE.Vector3(1000, 0, 1000);
@@ -297,11 +302,10 @@ export class DayNightCycle {
      * Get sun position for a specific hour (for custom time mode)
      */
     getSunPositionForHour(hour: number): { azimuth: number; altitude: number } {
-        const SunCalc = require('suncalc');
         const baseDate = new Date('2026-06-21T00:00:00');
         const msInDay = hour * 3600 * 1000;
         const date = new Date(baseDate.getTime() + msInDay);
-        const pos = SunCalc.getPosition(date, 33.3528, -115.7339);
+        const pos = SunCalc.getPosition(date, LAT, LNG);
         return { azimuth: pos.azimuth, altitude: pos.altitude };
     }
 
@@ -309,11 +313,10 @@ export class DayNightCycle {
      * Get moon position for a specific hour (for custom time mode)
      */
     getMoonPositionForHour(hour: number): { azimuth: number; altitude: number } {
-        const SunCalc = require('suncalc');
         const baseDate = new Date('2026-06-21T00:00:00');
         const msInDay = hour * 3600 * 1000;
         const date = new Date(baseDate.getTime() + msInDay);
-        const pos = SunCalc.getMoonPosition(date, 33.3528, -115.7339);
+        const pos = SunCalc.getMoonPosition(date, LAT, LNG);
         return { azimuth: pos.azimuth, altitude: pos.altitude };
     }
 

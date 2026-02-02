@@ -43,9 +43,12 @@ export class Minimap {
 
     private isDragging = false;
     private cachedBackground: ImageData | null = null;
+    private cachedWithAgents: ImageData | null = null; // Cache of background + agents
     private mode: MinimapMode = 'overlay';
     private modeToggle: HTMLButtonElement | null = null;
     private baseBottom = 56;
+    private frameCounter = 0;
+    private updateInterval = 3; // Only update agents every N frames
 
     constructor(controls: OrbitControls, camera: THREE.Camera) {
         this.controls = controls;
@@ -310,33 +313,50 @@ export class Minimap {
     update(agents: Agent[]) {
         if (!this.world) return;
 
-        if (this.cachedBackground) {
+        // Frame skipping for performance - only redraw agents every N frames
+        this.frameCounter++;
+        const shouldDrawAgents = this.frameCounter >= this.updateInterval;
+        if (shouldDrawAgents) {
+            this.frameCounter = 0;
+        }
+
+        if (shouldDrawAgents) {
+            // Full redraw: background + agents
+            if (this.cachedBackground) {
+                this.ctx.putImageData(this.cachedBackground, 0, 0);
+            }
+
+            // Draw agents
+            for (let i = 0; i < agents.length; i++) {
+                const agent = agents[i];
+                const svgX = agent.position.x;
+                const svgY = agent.position.z;
+
+                const sx = this.worldToScreenX(svgX);
+                const sy = this.worldToScreenY(svgY);
+
+                // Get agent color
+                const mat = agent.mesh.material as THREE.MeshStandardMaterial;
+                const hex = '#' + mat.color.getHexString();
+
+                // Draw dot (smaller for less crowding)
+                this.ctx.beginPath();
+                this.ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+                this.ctx.fillStyle = hex;
+                this.ctx.fill();
+            }
+
+            // Cache this frame with agents for reuse
+            this.cachedWithAgents = this.ctx.getImageData(0, 0, this.width, this.height);
+        } else if (this.cachedWithAgents) {
+            // Use cached frame with agents
+            this.ctx.putImageData(this.cachedWithAgents, 0, 0);
+        } else if (this.cachedBackground) {
+            // Fallback to background only
             this.ctx.putImageData(this.cachedBackground, 0, 0);
         }
 
-        // Draw agents
-        agents.forEach(agent => {
-        // Convert from 3D local coords to minimap
-        // Agent position is in local coords (SVG space): SVG (x, y) → 3D (x, height, y)
-        // So: SVG.x = position.x, SVG.y = position.z
-        const svgX = agent.position.x;
-        const svgY = agent.position.z;
-
-            const sx = this.worldToScreenX(svgX);
-            const sy = this.worldToScreenY(svgY);
-
-            // Get agent color
-            const mat = agent.mesh.material as THREE.MeshStandardMaterial;
-            const hex = '#' + mat.color.getHexString();
-
-            // Draw dot (smaller for less crowding)
-            this.ctx.beginPath();
-            this.ctx.arc(sx, sy, 2, 0, Math.PI * 2);
-            this.ctx.fillStyle = hex;
-            this.ctx.fill();
-        });
-
-        // Draw camera viewport
+        // Draw camera viewport (always updated for responsiveness)
         // Camera target is in centered 3D space (world is centered around 0,0,0)
         // SVG (x, y) → 3D (x, height, y), then centered: worldX = svgX - centerX, worldZ = svgY - centerY
         // So: svgX = centerX + worldX, svgY = centerY + worldZ

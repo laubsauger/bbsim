@@ -136,9 +136,9 @@ async function init() {
     sunLight.position.set(2000, 3000, 1500);
     sunLight.castShadow = true;
 
-    // Shadow configuration for quality
-    sunLight.shadow.mapSize.width = 8192;
-    sunLight.shadow.mapSize.height = 8192;
+    // Shadow configuration - 4096 provides good quality with better performance
+    sunLight.shadow.mapSize.width = 4096;
+    sunLight.shadow.mapSize.height = 4096;
     sunLight.shadow.camera.near = 100;
     sunLight.shadow.camera.far = 8000;
     sunLight.shadow.camera.left = -3000;
@@ -829,6 +829,11 @@ async function init() {
 
         pathSystem = new PathfindingSystem(world.roads);
         pathSystem.computeAccessPoints(world.lots);
+
+        // Create street lamps at intersections
+        const intersectionCenters = pathSystem.getIntersectionCenters();
+        dayNightCycle.createStreetLamps(intersectionCenters);
+
         const centeredBounds = {
             minX: world.bounds.minX + worldRenderer.group.position.x,
             maxX: world.bounds.maxX + worldRenderer.group.position.x,
