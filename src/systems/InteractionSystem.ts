@@ -224,6 +224,14 @@ export class InteractionSystem {
                                 Speed: ${Math.round(agent.speed)}
                             </div>
                         `);
+                    } else if (data.type === 'building') {
+                        const building = data.data as { id: number };
+                        hits.push(`
+                            <div style="margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px;">
+                                <strong style="color: #BFD3FF">🏗️ BUILDING</strong><br>
+                                ID: ${building.id}
+                            </div>
+                        `);
                     }
                 }
                 if (hits.length >= 3) break; // Limit stack depth

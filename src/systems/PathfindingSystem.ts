@@ -22,11 +22,13 @@ export class PathfindingSystem {
     private debugGroup: THREE.Group | null = null;
     private parkingLegGroup: THREE.Group | null = null;
     private parkingLegMaterial: THREE.LineBasicMaterial | null = null;
+    private intersectionRects: Array<{ minX: number; minY: number; maxX: number; maxY: number }> = [];
 
     constructor(roads: RoadSegment[]) {
         this.roads = roads;
         this.graph = new RoadGraph(roads);
         this.pedestrianGraph = new PedestrianGraph(roads, this.sidewalkOffset);
+        this.intersectionRects = this.buildIntersectionRects(roads);
     }
 
 
@@ -71,6 +73,61 @@ export class PathfindingSystem {
     private isBarOpen(): boolean {
         // 11am to 1am
         return this.currentHour >= 11 || this.currentHour < 1;
+    }
+
+    private buildIntersectionRects(roads: RoadSegment[]) {
+        const rects: Array<{ minX: number; minY: number; maxX: number; maxY: number }> = [];
+        const vertical = roads.filter(r => r.type === 'vertical');
+        const horizontal = roads.filter(r => r.type === 'horizontal');
+
+        for (const v of vertical) {
+            for (const h of horizontal) {
+                const overlapX = v.x <= h.x + h.width && v.x + v.width >= h.x;
+                const overlapY = h.y <= v.y + v.height && h.y + h.height >= v.y;
+                if (overlapX && overlapY) {
+                    rects.push({
+                        minX: Math.max(v.x, h.x),
+                        maxX: Math.min(v.x + v.width, h.x + h.width),
+                        minY: Math.max(v.y, h.y),
+                        maxY: Math.min(v.y + v.height, h.y + h.height),
+                    });
+                }
+            }
+        }
+        return rects;
+    }
+
+    private isNearIntersection(x: number, y: number, clearance: number): boolean {
+        for (const rect of this.intersectionRects) {
+            if (x >= rect.minX - clearance && x <= rect.maxX + clearance &&
+                y >= rect.minY - clearance && y <= rect.maxY + clearance) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private adjustPointAwayFromIntersection(road: RoadSegment, point: Point, clearance: number): Point {
+        for (const rect of this.intersectionRects) {
+            const overlapsX = point.x >= rect.minX - clearance && point.x <= rect.maxX + clearance;
+            const overlapsY = point.y >= rect.minY - clearance && point.y <= rect.maxY + clearance;
+            if (!overlapsX || !overlapsY) continue;
+
+            if (road.type === 'vertical') {
+                const up = rect.minY - clearance;
+                const down = rect.maxY + clearance;
+                const preferUp = Math.abs(point.y - up) < Math.abs(point.y - down);
+                const clampedY = preferUp ? Math.max(road.y, up) : Math.min(road.y + road.height, down);
+                return { x: point.x, y: clampedY };
+            }
+
+            const left = rect.minX - clearance;
+            const right = rect.maxX + clearance;
+            const preferLeft = Math.abs(point.x - left) < Math.abs(point.x - right);
+            const clampedX = preferLeft ? Math.max(road.x, left) : Math.min(road.x + road.width, right);
+            return { x: clampedX, y: point.y };
+        }
+        return point;
     }
 
     getRandomPointOnRoad(): THREE.Vector3 {
@@ -339,7 +396,12 @@ export class PathfindingSystem {
             }
 
             if (accessPoint && closestRoad) {
-                lot.roadAccessPoint = { x: accessPoint.x, y: accessPoint.z };
+                const adjusted = this.adjustPointAwayFromIntersection(
+                    closestRoad,
+                    { x: accessPoint.x, y: accessPoint.z },
+                    12
+                );
+                lot.roadAccessPoint = { x: adjusted.x, y: adjusted.y };
 
                 let minPtDist = Infinity;
                 let entryX = centerX;
@@ -349,8 +411,8 @@ export class PathfindingSystem {
                 for (let i = 0; i < lot.points.length; i++) {
                     const p1 = lot.points[i];
                     const p2 = lot.points[(i + 1) % lot.points.length];
-                    const pt = this.closestPointOnSegment(p1, p2, { x: accessPoint.x, y: accessPoint.z });
-                    const d = Math.sqrt(Math.pow(pt.x - accessPoint.x, 2) + Math.pow(pt.y - accessPoint.z, 2));
+                    const pt = this.closestPointOnSegment(p1, p2, { x: adjusted.x, y: adjusted.y });
+                    const d = Math.sqrt(Math.pow(pt.x - adjusted.x, 2) + Math.pow(pt.y - adjusted.y, 2));
 
                     if (d < minPtDist) {
                         minPtDist = d;
@@ -397,6 +459,47 @@ export class PathfindingSystem {
 
             // Initialize parking spots array
             lot.parkingSpots = [];
+            let hasCustomParking = false;
+
+            if (lot.id === 618) {
+                const minX = Math.min(...lot.points.map(p => p.x));
+                const maxX = Math.max(...lot.points.map(p => p.x));
+                const minY = Math.min(...lot.points.map(p => p.y));
+                const maxY = Math.max(...lot.points.map(p => p.y));
+                const width = maxX - minX;
+                const height = maxY - minY;
+
+                const insetX = Math.min(18, width * 0.18);
+                const insetY = Math.min(18, height * 0.12);
+                const usableHeight = Math.max(0, height - insetY * 2);
+                const rows = 6;
+                const cols = 2;
+                const rowSpacing = rows > 1 ? usableHeight / (rows - 1) : 0;
+                const colSpacing = Math.min(14, width * 0.12);
+                const baseX = minX + insetX;
+                const baseY = minY + insetY;
+                const rotation = Math.PI / 2; // face east toward building
+
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        lot.parkingSpots!.push({
+                            x: baseX + c * colSpacing,
+                            y: baseY + r * rowSpacing,
+                            rotation,
+                            occupiedBy: null,
+                        });
+                    }
+                }
+
+                if (lot.parkingSpots.length > 0) {
+                    lot.parkingSpot = {
+                        x: lot.parkingSpots[0].x,
+                        y: lot.parkingSpots[0].y,
+                    };
+                    lot.parkingRotation = lot.parkingSpots[0].rotation;
+                }
+                hasCustomParking = true;
+            }
 
             // 2. Identify Short Edges & Check Road Proximity
             edges.forEach(edge => {
@@ -425,7 +528,7 @@ export class PathfindingSystem {
                         const dy = cy - edge.midpoint.y;
                         const len = Math.sqrt(dx * dx + dy * dy);
 
-                        if (len > 0 && lot.parkingSpots!.length < 2) {
+                        if (!hasCustomParking && len > 0 && lot.parkingSpots!.length < 2) {
                             const rotation = Math.atan2(-dx, -dy);
                             const perpX = -dy / len;
                             const perpY = dx / len;
@@ -464,7 +567,7 @@ export class PathfindingSystem {
             }
 
             // Fallback: if no parking spots found, create two near center facing closest road
-            if (lot.parkingSpots!.length === 0 && closestRoadPoint) {
+            if (!hasCustomParking && lot.parkingSpots!.length === 0 && closestRoadPoint) {
                 const dx = closestRoadPoint.x - cx;
                 const dy = closestRoadPoint.y - cy;
                 const len = Math.sqrt(dx * dx + dy * dy);
@@ -744,6 +847,10 @@ export class PathfindingSystem {
                 x = Math.max(road.x + edgeMargin, Math.min(point.x + offset, road.x + road.width - edgeMargin));
                 rotation = Math.PI / 2;
                 x = this.avoidIntersectionOnRoad(road, x, y, intersectionClear);
+            }
+
+            if (this.isNearIntersection(x, y, intersectionClear)) {
+                continue;
             }
 
             const id = this.getStreetParkingId(x, y);
@@ -1077,9 +1184,11 @@ export class PathfindingSystem {
                     }
                 }
                 agent.speedModifier = speedFactor;
+                const desiredSteer = new THREE.Vector3();
                 if (lateralPush.lengthSq() > 0.0001) {
-                    lateralPush.multiplyScalar(delta * (blocking ? 10 : 6));
-                    agent.position.add(lateralPush);
+                    const pushScale = blocking ? 0.6 : 0.4;
+                    lateralPush.multiplyScalar(pushScale);
+                    desiredSteer.add(lateralPush);
                 }
 
                 // Lane keeping + pass-around when blocked (on-road only)
@@ -1092,7 +1201,9 @@ export class PathfindingSystem {
                             this.vehicleLane.set(agent.id, laneSign);
                         }
                         const laneCooldown = this.vehicleLaneUntil.get(agent.id) ?? 0;
-                        if (blocking && (this.simTimeSeconds > laneCooldown)) {
+                        const blockedTimer = (agent as any).__blockedTimer || 0;
+                        (agent as any).__blockedTimer = blocking ? blockedTimer + delta : 0;
+                        if (blocking && (agent as any).__blockedTimer > 0.6 && (this.simTimeSeconds > laneCooldown)) {
                             const targetLane = -laneSign;
                             const laneOffset = (road.type === 'vertical' ? road.width : road.height) * 0.22;
                             const laneCoord = road.type === 'vertical'
@@ -1130,24 +1241,43 @@ export class PathfindingSystem {
                             if (laneClear) {
                                 laneSign = targetLane;
                                 this.vehicleLane.set(agent.id, laneSign);
-                                this.vehicleLaneUntil.set(agent.id, this.simTimeSeconds + 2);
+                                this.vehicleLaneUntil.set(agent.id, this.simTimeSeconds + 3);
                             } else {
                                 agent.speedModifier = Math.min(agent.speedModifier, 0.6);
                             }
                         }
 
                         const laneOffset = (road.type === 'vertical' ? road.width : road.height) * 0.22;
-                        const laneStrength = blockedByParked ? 8 : 4;
+                        const laneStrength = blockedByParked ? 4 : 2.5;
                         if (road.type === 'vertical') {
                             const desiredX = road.x + road.width / 2 + laneSign * laneOffset;
                             const shift = desiredX - currentSvg.x;
-                            agent.position.x += Math.max(-laneStrength, Math.min(laneStrength, shift)) * delta;
+                            const smooth = Math.max(-laneStrength, Math.min(laneStrength, shift));
+                            desiredSteer.x += smooth;
                         } else {
                             const desiredY = road.y + road.height / 2 + laneSign * laneOffset;
                             const shift = desiredY - currentSvg.y;
-                            agent.position.z += Math.max(-laneStrength, Math.min(laneStrength, shift)) * delta;
+                            const smooth = Math.max(-laneStrength, Math.min(laneStrength, shift));
+                            desiredSteer.z += smooth;
                         }
                     }
+                }
+
+                const steer = (agent as any).__steerOffset as THREE.Vector3 | undefined;
+                if (!steer) {
+                    (agent as any).__steerOffset = desiredSteer;
+                } else {
+                    steer.lerp(desiredSteer, 0.12);
+                }
+                const applied = (agent as any).__steerOffset as THREE.Vector3;
+                if (agent.target) {
+                    const base = (agent as any).__baseTarget as THREE.Vector3 | undefined;
+                    if (!base || base.distanceToSquared(agent.target) > 1) {
+                        (agent as any).__baseTarget = agent.target.clone();
+                    }
+                    const baseTarget = (agent as any).__baseTarget as THREE.Vector3;
+                    agent.target.x = baseTarget.x + applied.x;
+                    agent.target.z = baseTarget.z + applied.z;
                 }
 
                 // Stuck detector: reroute if we haven't moved for a while

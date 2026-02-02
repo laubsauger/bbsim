@@ -1,4 +1,4 @@
-import { MapData, Lot, RoadSegment, LotUsage, LotState, Building } from "../types";
+import { MapData, Lot, RoadSegment, LotUsage, LotState, Building, MapMetadata } from "../types";
 
 export class World {
     lots: Lot[] = [];
@@ -6,6 +6,7 @@ export class World {
     roads: RoadSegment[] = [];
     width: number = 0;
     height: number = 0;
+    metadata?: MapMetadata;
 
     constructor() { }
 
@@ -58,7 +59,25 @@ export class World {
             };
         });
 
-        // Calculate bounds dynamically
+        this.metadata = data.metadata;
+
+        // Use strict ViewBox from metadata if available for perfect alignment
+        if (data.metadata.viewBox) {
+            const vb = data.metadata.viewBox;
+            // Note: SVG Y is inverted in renderer? No, renderer does simple projection.
+            // SVG origin is top-left.
+            this.bounds = {
+                minX: vb.x,
+                maxX: vb.x + vb.width,
+                minY: vb.y,
+                maxY: vb.y + vb.height
+            };
+            this.width = vb.width;
+            this.height = vb.height;
+            return; // Skip dynamic calculation
+        }
+
+        // Calculate bounds dynamically as fallback
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
         const updateBounds = (x: number, y: number) => {

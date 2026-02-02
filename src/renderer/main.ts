@@ -592,6 +592,7 @@ async function init() {
         showDebugBuildings: true,
         showMapTexture: false,
         renderBuildings: true, // Keep meshes by default
+        projectOnBuildings: false
     };
     debugFolder.add(debugConfig, 'showRoadGraph').name('Show Road Graph').onChange((show: boolean) => {
         if (show && pathSystem) {
@@ -631,6 +632,18 @@ async function init() {
     debugFolder.add(debugConfig, 'showMapTexture').name('Show Map Texture').onChange((show: boolean) => {
         if (mapTexture) {
             applyMapTextureToMeshes(show);
+        }
+    });
+
+    debugFolder.add(debugConfig, 'projectOnBuildings').name('Texture on Buildings').onChange(() => {
+        // Re-apply current state to respect new flag
+        if (mapTexture && debugConfig.showMapTexture) {
+            applyMapTextureToMeshes(true);
+        } else if (mapTexture && !debugConfig.showMapTexture) {
+            // If disabled, just ensure defaults are restored. 
+            // Although if texture is OFF, this flag doesn't matter much unless we just toggled it OFF.
+            // But re-running clear ensures it.
+            applyMapTextureToMeshes(false);
         }
     });
 
@@ -705,7 +718,7 @@ async function init() {
     }
 
     try {
-        const response = await fetch('/docs/map_data.json');
+        const response = await fetch('docs/map_data.json');
         if (!response.ok) throw new Error('Failed to load map data');
         const mapData: MapData = await response.json();
 
@@ -714,7 +727,7 @@ async function init() {
 
         // Load Map Texture for Projection
         const textureLoader = new THREE.TextureLoader();
-        textureLoader.load('/docs/map/image_BB_map.png', (tex) => {
+        textureLoader.load('docs/map/image_BB_map.png', (tex) => {
             tex.colorSpace = THREE.SRGBColorSpace;
             mapTexture = tex;
             if (debugConfig.showMapTexture) {
@@ -1162,7 +1175,18 @@ async function init() {
         worldRenderer.group.traverse((child) => {
             if (child instanceof THREE.Mesh) {
                 const type = child.userData.type;
-                if (type === 'road' || type === 'lot') {
+                if (type === 'road' || type === 'lot' || type === 'building') {
+                    // Check if we should skip buildings
+                    if (type === 'building' && enabled && !debugConfig.projectOnBuildings) {
+                        // If enabled is TRUE globally, but building projection is FALSE, 
+                        // we should act as if enabled is FALSE for this building.
+                        // So we fall through to the 'else' block logic basically, OR explicitly restore.
+                        if (child.userData.originalMaterial) {
+                            child.material = child.userData.originalMaterial;
+                        }
+                        return;
+                    }
+
                     if (enabled) {
                         // Store original material if not already stored
                         if (!child.userData.originalMaterial) {
@@ -1175,10 +1199,6 @@ async function init() {
                         newMat.map = mapTexture;
                         newMat.color.setHex(0xFFFFFF); // White to show texture colors accurately
                         newMat.needsUpdate = true;
-
-                        // Fix Z-fighting on roads by adding a small polygon offset to textured materials?
-                        // Actually, if we just ensure we don't mutate the shared material, the base color issue is fixed.
-                        // Overlapping inputs will still overlap.
 
                         child.material = newMat;
                     } else {

@@ -438,6 +438,25 @@ roadSegments.push(...verticalRoads, ...horizontalRoads);
 
 console.log(`Identified ${roadSegments.length} road segments.`);
 
+// --- Manual Road Injection (PRE-CLAMPING) ---
+// Load existing data to preserve manually added roads (e.g. alleys)
+// This must happen BEFORE clamping so lots respect the alleys.
+let manualRoads = [];
+if (fs.existsSync(outputPath)) {
+    try {
+        const existingData = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+        if (existingData.road_segments) {
+            manualRoads = existingData.road_segments.filter(r => r.id && r.id.startsWith('h-alley-'));
+            console.log(`Loaded ${manualRoads.length} manual roads for clamping.`);
+        }
+    } catch (e) {
+        console.warn("Could not read existing map_data.json:", e.message);
+    }
+}
+
+// Add manual roads to the main list for clamping logic
+roadSegments.push(...manualRoads);
+
 // --- Cleaning & Deduping ---
 console.log(`Initial Lot Count: ${lots.length}`);
 
@@ -480,7 +499,7 @@ function clampLotBoundsToRoads(bounds) {
     const minY = topRoadEdge !== null ? topRoadEdge : (viewBox ? viewBox.y : bounds.minY);
     const maxY = bottomRoadEdge !== null ? bottomRoadEdge : (viewBox ? viewBox.y + viewBox.height : bounds.maxY);
 
-    const inset = 1;
+    const inset = 0; // Removed inset (was 1) to eliminate gaps between roads and lots
     const clamped = {
         minX: Math.min(Math.max(minX + inset, bounds.minX), maxX - inset),
         maxX: Math.max(Math.min(maxX - inset, bounds.maxX), minX + inset),
@@ -531,6 +550,7 @@ const uniqueBuildings = buildings.map((b, index) => ({
     id: index,
     points: b.geometry.map(p => ({ x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)) }))
 }));
+
 
 const output = {
     metadata: {

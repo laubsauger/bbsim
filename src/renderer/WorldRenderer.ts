@@ -143,17 +143,13 @@ export class WorldRenderer {
 
         // Calculate minimal bounds (tight fit) for map texture projection
         // This MUST match the bounds used for the map texture itself
-        const mapBounds = world.roads.reduce((acc, r) => {
-            acc.minX = Math.min(acc.minX, r.x);
-            acc.maxX = Math.max(acc.maxX, r.x + r.width);
-            acc.minY = Math.min(acc.minY, r.y);
-            acc.maxY = Math.max(acc.maxY, r.y + r.height);
-            return acc;
-        }, { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+        // Use the World bounds (which are now ViewBox-accurate) for texture projection.
+        // This ensures the texture (which covers the whole ViewBox) maps 1:1.
+        const mapBounds = { ...world.bounds };
 
         this.renderRoads(world.roads, mapBounds);
         this.renderLots(world.lots, mapBounds);
-        this.renderBuildings(world.buildings || []);
+        this.renderBuildings(world.buildings || [], mapBounds);
         this.renderNorthIndicator(world);
 
         // Center the group - compute center from the bounding box
@@ -378,7 +374,7 @@ export class WorldRenderer {
             // Coordinate transform: SVG (x, y) → 3D (x, height, y)
             mesh.position.set(
                 seg.x + seg.width / 2,
-                0.5,
+                0.5 + (seg.type === 'vertical' ? 0.05 : 0), // Slight offset for vertical roads to avoid Z-fighting
                 seg.y + seg.height / 2
             );
             mesh.receiveShadow = true;
@@ -387,7 +383,7 @@ export class WorldRenderer {
             this.group.add(mesh);
         });
     }
-    private renderBuildings(buildings: Building[]) {
+    private renderBuildings(buildings: Building[], mapBounds: { minX: number, maxX: number, minY: number, maxY: number }) {
         const buildingGroup = new THREE.Group();
         buildingGroup.name = 'Buildings';
         buildingGroup.visible = true;
@@ -429,10 +425,14 @@ export class WorldRenderer {
                 bevelEnabled: false,
             });
 
+            // Apply Map UVs for texture projection (roofs will pick this up)
+            this.applyMapUVs(geometry, centerX, centerY, mapBounds);
+
             const mesh = new THREE.Mesh(geometry, this.materials['building']);
             mesh.name = `Building ${building.id}`;
             mesh.castShadow = true;
             mesh.receiveShadow = true;
+            mesh.userData = { type: 'building', data: building };
 
             // Positioning
             mesh.rotation.x = -Math.PI / 2;
