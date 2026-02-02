@@ -78,7 +78,7 @@ export class SheriffSystem {
 
         this.patrolPoints = selectedLots.map(lot => {
             const access = lot.roadAccessPoint!;
-            return new THREE.Vector3(access.x, 1, -access.y);
+            return new THREE.Vector3(access.x, 1, access.y);
         });
 
         // Add some random road points if we don't have enough interesting lots
@@ -98,7 +98,7 @@ export class SheriffSystem {
     private spawnSheriff() {
         const entry = this.getEntryPoint();
         const nearestRoad = this.pathSystem.getNearestRoadPoint(entry.x, entry.y);
-        const pos = new THREE.Vector3(nearestRoad.x, 1, -nearestRoad.y);
+        const pos = new THREE.Vector3(nearestRoad.x, 1, nearestRoad.y);
 
         // Create sheriff (cop agent)
         this.sheriff = new Agent({
@@ -157,7 +157,7 @@ export class SheriffSystem {
         if (!this.sheriffCar) return;
 
         const exit = this.getEntryPoint();
-        const exitTarget = new THREE.Vector3(exit.x, 1, -exit.y);
+        const exitTarget = new THREE.Vector3(exit.x, 1, exit.y);
         const path = this.pathSystem.getPathTo(this.sheriffCar.position, exitTarget);
 
         if (path.length > 0) {
@@ -214,7 +214,7 @@ export class SheriffSystem {
             case SheriffState.LEAVING_TOWN:
                 const exitPoint = this.getEntryPoint();
                 const exitDist = this.sheriffCar.position.distanceTo(
-                    new THREE.Vector3(exitPoint.x, 1, -exitPoint.y)
+                    new THREE.Vector3(exitPoint.x, 1, exitPoint.y)
                 );
                 if (exitDist < 30 && !this.sheriffCar.target && (!this.sheriffCar.path || this.sheriffCar.path.length === 0)) {
                     this.despawnSheriff();

@@ -288,9 +288,9 @@ export class PedestrianGraph {
 
             for (const neighborId of current.connections) {
                 const neighbor = this.nodes.get(neighborId)!;
-                const tentativeG = (gScore.get(currentId) || Infinity) + this.dist(current, neighbor);
+                const tentativeG = (gScore.get(currentId) ?? Infinity) + this.dist(current, neighbor);
 
-                if (tentativeG < (gScore.get(neighborId) || Infinity)) {
+                if (tentativeG < (gScore.get(neighborId) ?? Infinity)) {
                     cameFrom.set(neighborId, currentId);
                     gScore.set(neighborId, tentativeG);
                     fScore.set(neighborId, tentativeG + this.heuristic(neighbor, endNode));
@@ -310,7 +310,7 @@ export class PedestrianGraph {
         let lowestScore = Infinity;
 
         openSet.forEach(id => {
-            const score = fScore.get(id) || Infinity;
+            const score = fScore.get(id) ?? Infinity;
             if (score < lowestScore) {
                 lowestScore = score;
                 lowestId = id;

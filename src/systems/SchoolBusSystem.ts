@@ -75,7 +75,7 @@ export class SchoolBusSystem {
             if (usedLots.has(lot.id)) continue;
 
             const accessPoint = lot.roadAccessPoint!;
-            const stop = new THREE.Vector3(accessPoint.x, 1, -accessPoint.y);
+            const stop = new THREE.Vector3(accessPoint.x, 1, accessPoint.y);
 
             // Mark nearby lots as covered by this stop
             for (const otherLot of residentialLots) {
@@ -96,8 +96,8 @@ export class SchoolBusSystem {
         // Sort stops by distance from entry point (northwest)
         const entryPoint = this.getEntryPoint();
         stops.sort((a, b) => {
-            const distA = a.distanceTo(new THREE.Vector3(entryPoint.x, 1, -entryPoint.y));
-            const distB = b.distanceTo(new THREE.Vector3(entryPoint.x, 1, -entryPoint.y));
+            const distA = a.distanceTo(new THREE.Vector3(entryPoint.x, 1, entryPoint.y));
+            const distB = b.distanceTo(new THREE.Vector3(entryPoint.x, 1, entryPoint.y));
             return distA - distB;
         });
 
@@ -119,7 +119,7 @@ export class SchoolBusSystem {
     private spawnBus(isPickingUp: boolean) {
         const entry = this.getEntryPoint();
         const nearestRoad = this.pathSystem.getNearestRoadPoint(entry.x, entry.y);
-        const pos = new THREE.Vector3(nearestRoad.x, 1, -nearestRoad.y);
+        const pos = new THREE.Vector3(nearestRoad.x, 1, nearestRoad.y);
 
         this.bus = new SchoolBus({
             id: `school_bus_${Date.now()}`,
@@ -162,7 +162,7 @@ export class SchoolBusSystem {
         if (!this.bus) return;
 
         const exit = this.getExitPoint();
-        const exitTarget = new THREE.Vector3(exit.x, 1, -exit.y);
+        const exitTarget = new THREE.Vector3(exit.x, 1, exit.y);
         const path = this.pathSystem.getPathTo(this.bus.position, exitTarget);
 
         if (path.length > 0) {

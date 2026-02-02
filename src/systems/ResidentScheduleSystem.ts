@@ -515,12 +515,12 @@ export class ResidentScheduleSystem {
     private returnFromTown(resident: Resident) {
         const entry = this.getHighwayEntryPoint();
         if (resident.data.car) {
-            resident.data.car.position.set(entry.x, 1, -entry.y);
+            resident.data.car.position.set(entry.x, 1, entry.y);
             resident.data.car.updateMesh();
             resident.data.car.carGroup.visible = true;
             resident.data.car.setDriver(null);
         }
-        resident.position.set(entry.x, 1, -entry.y);
+        resident.position.set(entry.x, 1, entry.y);
         resident.mesh.visible = true;
         resident.isInCar = false;
         resident.behaviorState = ResidentState.WALKING_HOME;
