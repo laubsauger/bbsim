@@ -22,6 +22,7 @@
     "include": [
         "src",
         "extract_map.ts",
-        "inject_data.ts"
+        "inject_data.ts",
+        "vite.config.ts"
     ]
 }
