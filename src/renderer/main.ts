@@ -591,7 +591,7 @@ async function init() {
         showDebugLots: false,
         showDebugBuildings: true,
         showMapTexture: false,
-        renderBuildings: true,
+        renderBuildings: true, // Keep meshes by default
     };
     debugFolder.add(debugConfig, 'showRoadGraph').name('Show Road Graph').onChange((show: boolean) => {
         if (show && pathSystem) {
@@ -885,6 +885,7 @@ async function init() {
 
                 pathSystem.updateTraffic(agents, delta * timeScale);
                 agents.forEach(a => a.update(delta * timeScale));
+                pathSystem.enforcePedestrianBounds(agents);
 
                 if (touristSystem) {
                     touristSystem.update(timeSystem.time.totalSeconds, delta * timeScale, timeSystem.time.hour);
@@ -1163,19 +1164,28 @@ async function init() {
                 const type = child.userData.type;
                 if (type === 'road' || type === 'lot') {
                     if (enabled) {
-                        // Save original color if not saved
-                        if (!child.userData.originalColor) {
-                            child.userData.originalColor = child.material.color.clone();
+                        // Store original material if not already stored
+                        if (!child.userData.originalMaterial) {
+                            child.userData.originalMaterial = child.material;
                         }
-                        child.material.map = mapTexture;
-                        child.material.color.setHex(0xFFFFFF); // White to show texture
-                        child.material.needsUpdate = true;
+
+                        // Create a clone of the original material to apply the texture
+                        // distinct for each mesh to avoid shared state pollution
+                        const newMat = child.userData.originalMaterial.clone();
+                        newMat.map = mapTexture;
+                        newMat.color.setHex(0xFFFFFF); // White to show texture colors accurately
+                        newMat.needsUpdate = true;
+
+                        // Fix Z-fighting on roads by adding a small polygon offset to textured materials?
+                        // Actually, if we just ensure we don't mutate the shared material, the base color issue is fixed.
+                        // Overlapping inputs will still overlap.
+
+                        child.material = newMat;
                     } else {
-                        child.material.map = null;
-                        if (child.userData.originalColor) {
-                            child.material.color.copy(child.userData.originalColor);
+                        // Restore original material
+                        if (child.userData.originalMaterial) {
+                            child.material = child.userData.originalMaterial;
                         }
-                        child.material.needsUpdate = true;
                     }
                 }
             }

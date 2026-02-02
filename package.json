@@ -2,8 +2,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "extract": "ts-node extract_map.ts",
-    "inject": "ts-node inject_data.ts"
+    "extract": "node public/docs/extract_map.js",
+    "inject": "node public/docs/inject_data.js"
   },
   "devDependencies": {
     "@types/node": "^25.1.0",

@@ -394,6 +394,40 @@ roadRects.forEach(rectStr => {
     });
 });
 
+// 2. Extract Roads (Paths) - Add this section
+const roadPaths = roadsSvgContent.match(pathRegex) || [];
+roadPaths.forEach(pathStr => {
+    const getAttr = (name) => {
+        const match = pathStr.match(new RegExp(`${name}="([^"]+)"`));
+        return match ? match[1] : null;
+    };
+    const d = getAttr('d');
+    if (!d) return;
+    const transformStr = getAttr('transform');
+    // For roads defined as paths, we assume they are rectangular paths (strips)
+    const points = parsePathToPoints(d);
+    if (points.length < 4) return; // Need at least a rect
+
+    const transformedPoints = applyTransforms(points, transformStr);
+    const bounds = getPolygonBounds(transformedPoints);
+
+    // Validate if it's substantial enough to be a road
+    if ((bounds.maxX - bounds.minX) < 1 && (bounds.maxY - bounds.minY) < 1) return;
+
+    const segWidth = bounds.maxX - bounds.minX;
+    const segHeight = bounds.maxY - bounds.minY;
+    const type = segWidth >= segHeight ? 'horizontal' : 'vertical';
+
+    roadSegments.push({
+        id: '',
+        type,
+        x: Number(bounds.minX.toFixed(2)),
+        y: Number(bounds.minY.toFixed(2)),
+        width: Number(segWidth.toFixed(2)),
+        height: Number(segHeight.toFixed(2))
+    });
+});
+
 const verticalRoads = roadSegments.filter(r => r.type === 'vertical').sort((a, b) => a.x - b.x);
 const horizontalRoads = roadSegments.filter(r => r.type === 'horizontal').sort((a, b) => a.y - b.y);
 verticalRoads.forEach((r, idx) => { r.id = `v-road-${idx}`; });

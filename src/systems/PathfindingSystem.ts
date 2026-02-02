@@ -1456,6 +1456,30 @@ export class PathfindingSystem {
         });
     }
 
+    enforcePedestrianBounds(agents: any[]) {
+        for (const agent of agents) {
+            if (!this.isPedestrian(agent)) continue;
+            const svg = this.toSvg(agent.position);
+            const onPublicPath = this.isOnSidewalk(svg.x, svg.y) || this.isOnRoad(svg.x, svg.y);
+            if (onPublicPath) continue;
+
+            const lot = this.findLotContainingPoint(svg, this.lots);
+            if (lot && this.isLotAllowedForPedestrian(agent, lot)) {
+                const bounds = this.getLotBounds(lot);
+                const margin = 2;
+                const clampedX = Math.min(bounds.maxX - margin, Math.max(bounds.minX + margin, svg.x));
+                const clampedY = Math.min(bounds.maxY - margin, Math.max(bounds.minY + margin, svg.y));
+                agent.position.x = clampedX;
+                agent.position.z = clampedY;
+                continue;
+            }
+
+            const nearest = this.getNearestSidewalkPoint(svg.x, svg.y);
+            agent.position.x = nearest.x;
+            agent.position.z = nearest.y;
+        }
+    }
+
     getDebugVisualization(): THREE.Group {
         if (this.debugGroup) return this.debugGroup;
 
