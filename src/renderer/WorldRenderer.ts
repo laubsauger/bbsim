@@ -140,8 +140,19 @@ export class WorldRenderer {
         this.clear();
 
         this.renderGround(world);
-        this.renderRoads(world.roads);
-        this.renderLots(world.lots);
+
+        // Calculate minimal bounds (tight fit) for map texture projection
+        // This MUST match the bounds used for the map texture itself
+        const mapBounds = world.roads.reduce((acc, r) => {
+            acc.minX = Math.min(acc.minX, r.x);
+            acc.maxX = Math.max(acc.maxX, r.x + r.width);
+            acc.minY = Math.min(acc.minY, r.y);
+            acc.maxY = Math.max(acc.maxY, r.y + r.height);
+            return acc;
+        }, { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+
+        this.renderRoads(world.roads, mapBounds);
+        this.renderLots(world.lots, mapBounds);
         this.renderBuildings(world.buildings || []);
         this.renderNorthIndicator(world);
 
@@ -224,7 +235,7 @@ export class WorldRenderer {
         }
     }
 
-    private renderLots(lots: Lot[]) {
+    private renderLots(lots: Lot[], mapBounds: { minX: number, maxX: number, minY: number, maxY: number }) {
         // First pass: render lot fills
         lots.forEach(lot => {
             if (lot.points.length === 0) return;
@@ -252,6 +263,8 @@ export class WorldRenderer {
                 depth: 1,
                 bevelEnabled: false,
             });
+
+            this.applyMapUVs(geometry, centerX, centerY, mapBounds);
 
             const material = this.getLotMaterial(lot);
             const mesh = new THREE.Mesh(geometry, material);
@@ -344,7 +357,7 @@ export class WorldRenderer {
         this.group.add(borderLines);
     }
 
-    private renderRoads(segments: RoadSegment[]) {
+    private renderRoads(segments: RoadSegment[], mapBounds: { minX: number, maxX: number, minY: number, maxY: number }) {
         // Add slight padding to roads to close micro-gaps with lot boundaries
         const roadPadding = 2; // Extra padding on each side
 
@@ -354,6 +367,12 @@ export class WorldRenderer {
             const paddedHeight = seg.height + roadPadding * 2;
 
             const geometry = new THREE.PlaneGeometry(paddedWidth, paddedHeight);
+
+            // Apply World UVs
+            const centerX = seg.x + seg.width / 2;
+            const centerY = seg.y + seg.height / 2;
+            this.applyMapUVs(geometry, centerX, centerY, mapBounds);
+
             const mesh = new THREE.Mesh(geometry, this.materials.road);
             mesh.rotation.x = -Math.PI / 2;
             // Coordinate transform: SVG (x, y) → 3D (x, height, y)
@@ -386,11 +405,11 @@ export class WorldRenderer {
             const centerY = minY + height / 2;
 
             const shape = new THREE.Shape();
-            // Rotate 180 degrees by negating both x and y relative to center
-            // This aligns the mesh with the debug overlay which maps Y -> Z
-            shape.moveTo(-(building.points[0].x - centerX), -(building.points[0].y - centerY));
+            // User requested West-East flip relative to the 180-rotated state.
+            // Current state was (-x, -y). Flipping X gives (x, -y).
+            shape.moveTo((building.points[0].x - centerX), -(building.points[0].y - centerY));
             for (let i = 1; i < building.points.length; i++) {
-                shape.lineTo(-(building.points[i].x - centerX), -(building.points[i].y - centerY));
+                shape.lineTo((building.points[i].x - centerX), -(building.points[i].y - centerY));
             }
             shape.closePath();
 
@@ -431,5 +450,32 @@ export class WorldRenderer {
         if (this.buildingGroup) {
             this.buildingGroup.visible = visible;
         }
+    }
+
+    private applyMapUVs(geometry: THREE.BufferGeometry, cx: number, cy: number, bounds: { minX: number, maxX: number, minY: number, maxY: number }) {
+        const pos = geometry.attributes.position;
+        const uvs = new Float32Array(pos.count * 2);
+        const width = bounds.maxX - bounds.minX;
+        const height = bounds.maxY - bounds.minY;
+
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            const y = pos.getY(i);
+
+            // Geometry is rotated -90 X later.
+            // Local X -> World X relative to center
+            // Local Y -> World Z relative to center
+            const worldX = cx + x;
+            const worldZ = cy + y;
+
+            // Map U: (worldX - minX) / width
+            // Map V: 1 - (worldZ - minY) / height (Flipped Y)
+            const u = (worldX - bounds.minX) / width;
+            const v = 1 - (worldZ - bounds.minY) / height;
+
+            uvs[i * 2] = u;
+            uvs[i * 2 + 1] = v;
+        }
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     }
 }

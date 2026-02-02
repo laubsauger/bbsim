@@ -721,9 +721,10 @@ export class PathfindingSystem {
         const road = this.getRoadAt(point.x, point.y) || this.getNearestRoadSegment(point.x, point.y);
         if (!road) return null;
 
-        const edgeMargin = 24;
-        const intersectionClear = 40;
+        const edgeMargin = 28;
+        const intersectionClear = 50;
         const offsets = [0, 12, -12, 24, -24, 36, -36];
+        const curbInset = Math.max(2, Math.min(6, road.type === 'vertical' ? road.width * 0.15 : road.height * 0.15));
 
         for (const offset of offsets) {
             let x = point.x;
@@ -731,12 +732,12 @@ export class PathfindingSystem {
             let rotation = 0;
 
             if (road.type === 'vertical') {
-                x = road.x + road.width * 0.25;
+                x = road.x + curbInset;
                 y = Math.max(road.y + edgeMargin, Math.min(point.y + offset, road.y + road.height - edgeMargin));
                 rotation = 0;
                 y = this.avoidIntersectionOnRoad(road, x, y, intersectionClear);
             } else {
-                y = road.y + road.height * 0.25;
+                y = road.y + curbInset;
                 x = Math.max(road.x + edgeMargin, Math.min(point.x + offset, road.x + road.width - edgeMargin));
                 rotation = Math.PI / 2;
                 x = this.avoidIntersectionOnRoad(road, x, y, intersectionClear);

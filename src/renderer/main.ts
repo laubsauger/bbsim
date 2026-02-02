@@ -35,7 +35,8 @@ async function init() {
     const world = new World();
     const agents: Agent[] = []; // Unified list
     let pathSystem: PathfindingSystem;
-    let mapTexturePlane: THREE.Mesh | null = null;
+    let mapTexture: THREE.Texture | null = null;
+    let mapTextureEnabled = false;
     let touristSystem: TouristSystem | null = null;
     let residentScheduleSystem: ResidentScheduleSystem | null = null;
     let addressSystem: AddressSystem;
@@ -428,9 +429,24 @@ async function init() {
             return new THREE.LineSegments(geometry, material);
         };
 
-        const roadMaterial = new THREE.LineBasicMaterial({ color: 0x3d6bff, linewidth: 2 });
-        const lotMaterial = new THREE.LineBasicMaterial({ color: 0xff9f43, linewidth: 1 });
-        const buildingMaterial = new THREE.LineBasicMaterial({ color: 0x53d3b2, linewidth: 1 });
+        const roadMaterial = new THREE.LineBasicMaterial({
+            color: 0x3d6bff,
+            linewidth: 2,
+            depthTest: false,
+            transparent: true
+        });
+        const lotMaterial = new THREE.LineBasicMaterial({
+            color: 0xff9f43,
+            linewidth: 1,
+            depthTest: false,
+            transparent: true
+        });
+        const buildingMaterial = new THREE.LineBasicMaterial({
+            color: 0x53d3b2,
+            linewidth: 1,
+            depthTest: false,
+            transparent: true
+        });
 
         mapData.road_segments.forEach(seg => {
             const rect = [
@@ -608,7 +624,9 @@ async function init() {
         worldRenderer.setBuildingsVisible(show);
     });
     debugFolder.add(debugConfig, 'showMapTexture').name('Show Map Texture').onChange((show: boolean) => {
-        if (mapTexturePlane) mapTexturePlane.visible = show;
+        if (mapTexture) {
+            applyMapTextureToMeshes(show);
+        }
     });
 
     // --- 4. Logic ---
@@ -688,11 +706,17 @@ async function init() {
 
         world.load(mapData);
         worldRenderer.render(world);
-        mapTexturePlane = createMapTexturePlane(world);
-        if (mapTexturePlane) {
-            mapTexturePlane.visible = debugConfig.showMapTexture;
-            worldRenderer.group.add(mapTexturePlane);
-        }
+
+        // Load Map Texture for Projection
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load('/docs/map/image_BB_map.png', (tex) => {
+            tex.colorSpace = THREE.SRGBColorSpace;
+            mapTexture = tex;
+            if (debugConfig.showMapTexture) {
+                applyMapTextureToMeshes(true);
+            }
+        });
+
         debugOverlays = createDebugOverlays(mapData);
         debugOverlays.setVisible('debug_roads', debugConfig.showDebugRoads);
         debugOverlays.setVisible('debug_lots', debugConfig.showDebugLots);
@@ -1070,47 +1094,33 @@ async function init() {
         position.y = Math.max(20, position.y);
         return position;
     }
+
+    function applyMapTextureToMeshes(enabled: boolean) {
+        if (!mapTexture) return;
+
+        worldRenderer.group.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+                const type = child.userData.type;
+                if (type === 'road' || type === 'lot') {
+                    if (enabled) {
+                        // Save original color if not saved
+                        if (!child.userData.originalColor) {
+                            child.userData.originalColor = child.material.color.clone();
+                        }
+                        child.material.map = mapTexture;
+                        child.material.color.setHex(0xFFFFFF); // White to show texture
+                        child.material.needsUpdate = true;
+                    } else {
+                        child.material.map = null;
+                        if (child.userData.originalColor) {
+                            child.material.color.copy(child.userData.originalColor);
+                        }
+                        child.material.needsUpdate = true;
+                    }
+                }
+            }
+        });
+    }
 }
 
 init();
-
-function createMapTexturePlane(world: World): THREE.Mesh | null {
-    const texturePath = '/docs/map/image_BB_map.png';
-    const loader = new THREE.TextureLoader();
-    const texture = loader.load(texturePath);
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    const roadBounds = world.roads.reduce(
-        (acc, r) => {
-            acc.minX = Math.min(acc.minX, r.x);
-            acc.maxX = Math.max(acc.maxX, r.x + r.width);
-            acc.minY = Math.min(acc.minY, r.y);
-            acc.maxY = Math.max(acc.maxY, r.y + r.height);
-            return acc;
-        },
-        { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
-    );
-
-    if (!isFinite(roadBounds.minX)) return null;
-
-    const width = roadBounds.maxX - roadBounds.minX;
-    const height = roadBounds.maxY - roadBounds.minY;
-    const centerX = roadBounds.minX + width / 2;
-    const centerY = roadBounds.minY + height / 2;
-
-    const material = new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        opacity: 0.9,
-        depthTest: false,
-        depthWrite: false
-    });
-    const geometry = new THREE.PlaneGeometry(width, height);
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(centerX, 1.2, centerY);
-    mesh.renderOrder = 1;
-    return mesh;
-}
