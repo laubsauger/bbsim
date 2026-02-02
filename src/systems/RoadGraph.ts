@@ -14,7 +14,37 @@ export class RoadGraph {
 
     constructor(roads: RoadSegment[]) {
         this.buildGraph(roads);
-        console.log(`[RoadGraph] Built graph with ${this.nodes.size} nodes`);
+        console.log(`[RoadGraph] Built simpler graph with ${this.nodes.size} nodes (Intersections only)`);
+        this.verifyConnectivity();
+    }
+
+    private verifyConnectivity() {
+        if (this.nodes.size === 0) return;
+        const startNode = this.nodes.values().next().value;
+        if (!startNode) return;
+
+        const visited = new Set<string>();
+        const stack = [startNode.id];
+
+        while (stack.length > 0) {
+            const id = stack.pop()!;
+            if (visited.has(id)) continue;
+            visited.add(id);
+            const node = this.nodes.get(id);
+            if (node) {
+                node.connections.forEach(cid => {
+                    if (!visited.has(cid)) stack.push(cid);
+                });
+            }
+        }
+
+        if (visited.size !== this.nodes.size) {
+            console.error(`[RoadGraph] GRAPH DISCONNECTED! Reachable: ${visited.size}, Total: ${this.nodes.size}. Vehicles will fail to cross gaps.`);
+            const unreached = Array.from(this.nodes.keys()).filter(id => !visited.has(id));
+            console.warn(`[RoadGraph] First 5 unreachable nodes: ${unreached.slice(0, 5).join(', ')}`);
+        } else {
+            console.log(`[RoadGraph] Connectivity Verified: All ${this.nodes.size} nodes are fully connected.`);
+        }
     }
 
     getBounds(): { minX: number; maxX: number; minY: number; maxY: number } | null {
@@ -33,127 +63,99 @@ export class RoadGraph {
     }
 
     private buildGraph(roads: RoadSegment[]) {
-        const nodeSpacing = 50; // Add nodes every 50 units along roads
+        // Collect all strict intersection points first
+        const intersectionPoints: Point[] = [];
 
-        // For each road, create nodes along its centerline
-        roads.forEach(road => {
-            const nodesOnRoad: Point[] = [];
+        // Compare every Vertical road vs Horizontal road for intersections
+        const vRoads = roads.filter(r => r.type === 'vertical');
+        const hRoads = roads.filter(r => r.type === 'horizontal');
 
-            if (road.type === 'vertical') {
-                const cx = road.x + road.width / 2;
-                const startY = road.y;
-                const endY = road.y + road.height;
-                const length = endY - startY;
-                const numSegments = Math.max(1, Math.ceil(length / nodeSpacing));
+        vRoads.forEach(v => {
+            const vx = v.x + v.width / 2;
+            hRoads.forEach(h => {
+                const hy = h.y + h.height / 2;
 
-                for (let i = 0; i <= numSegments; i++) {
-                    const y = startY + (length * i / numSegments);
-                    nodesOnRoad.push({ x: cx, y });
+                // Check strict mathematical intersection with small tolerance
+                // Use a small epsilon for floating point safety
+                const vYStart = v.y;
+                const vYEnd = v.y + v.height;
+                const hXStart = h.x;
+                const hXEnd = h.x + h.width;
+
+                const tol = 2.0;
+                // If the horizontal line (hy) is within the vertical range
+                const inVRange = hy >= vYStart - tol && hy <= vYEnd + tol;
+                // If the vertical line (vx) is within the horizontal range
+                const inHRange = vx >= hXStart - tol && vx <= hXEnd + tol;
+
+                if (inVRange && inHRange) {
+                    intersectionPoints.push({ x: vx, y: hy });
                 }
-            } else {
-                const cy = road.y + road.height / 2;
-                const startX = road.x;
-                const endX = road.x + road.width;
-                const length = endX - startX;
-                const numSegments = Math.max(1, Math.ceil(length / nodeSpacing));
-
-                for (let i = 0; i <= numSegments; i++) {
-                    const x = startX + (length * i / numSegments);
-                    nodesOnRoad.push({ x, y: cy });
-                }
-            }
-
-            // Add nodes and connect them sequentially
-            nodesOnRoad.forEach(p => this.addNode(p));
-            for (let i = 0; i < nodesOnRoad.length - 1; i++) {
-                this.addEdge(this.getNodeId(nodesOnRoad[i]), this.getNodeId(nodesOnRoad[i + 1]));
-            }
+            });
         });
 
-        // Find intersections between roads and connect them
-        for (let i = 0; i < roads.length; i++) {
-            for (let j = i + 1; j < roads.length; j++) {
-                const r1 = roads[i];
-                const r2 = roads[j];
+        // Now traverse each road, find which points lie on it, sort them, and link them
+        roads.forEach(road => {
+            const pointsOnRoad: Point[] = [];
 
-                if (r1.type !== r2.type) {
-                    const vert = r1.type === 'vertical' ? r1 : r2;
-                    const horiz = r1.type === 'horizontal' ? r1 : r2;
+            // Add Endpoints
+            if (road.type === 'vertical') {
+                const cx = road.x + road.width / 2;
+                pointsOnRoad.push({ x: cx, y: road.y });
+                pointsOnRoad.push({ x: cx, y: road.y + road.height });
+            } else {
+                const cy = road.y + road.height / 2;
+                pointsOnRoad.push({ x: road.x, y: cy });
+                pointsOnRoad.push({ x: road.x + road.width, y: cy });
+            }
 
-                    const vertX = vert.x + vert.width / 2;
-                    const horizY = horiz.y + horiz.height / 2;
-
-                    const inVertRange = horizY >= vert.y && horizY <= vert.y + vert.height;
-                    const inHorizRange = vertX >= horiz.x && vertX <= horiz.x + horiz.width;
-
-                    if (inVertRange && inHorizRange) {
-                        const intersection: Point = { x: vertX, y: horizY };
-                        this.addNode(intersection);
-                        const intersectionId = this.getNodeId(intersection);
-
-                        // Connect to nearest nodes on both roads
-                        this.connectToNearestOnRoad(intersectionId, vert);
-                        this.connectToNearestOnRoad(intersectionId, horiz);
+            // Add Intersections that fall on this road
+            intersectionPoints.forEach(p => {
+                if (road.type === 'vertical') {
+                    const cx = road.x + road.width / 2;
+                    // Check Logic: Close to X centerline, and within Y range
+                    if (Math.abs(p.x - cx) < 1 && p.y >= road.y && p.y <= road.y + road.height) {
+                        // Avoid dupe endpoints
+                        // Actually Map Set handles dupes by ID, but let's push it anyway
+                        pointsOnRoad.push(p);
+                    }
+                } else {
+                    const cy = road.y + road.height / 2;
+                    if (Math.abs(p.y - cy) < 1 && p.x >= road.x && p.x <= road.x + road.width) {
+                        pointsOnRoad.push(p);
                     }
                 }
-            }
-        }
+            });
 
-        // Connect nodes that are very close (road junctions)
-        const snapDistance = 30;
-        const nodeArray = Array.from(this.nodes.values());
-        for (let i = 0; i < nodeArray.length; i++) {
-            for (let j = i + 1; j < nodeArray.length; j++) {
-                const n1 = nodeArray[i];
-                const n2 = nodeArray[j];
-                const dist = Math.sqrt((n1.x - n2.x) ** 2 + (n1.y - n2.y) ** 2);
-                if (dist < snapDistance && dist > 0) {
-                    this.addEdge(n1.id, n2.id);
+            // Sort points linearly
+            if (road.type === 'vertical') {
+                pointsOnRoad.sort((a, b) => a.y - b.y);
+            } else {
+                pointsOnRoad.sort((a, b) => a.x - b.x);
+            }
+
+            // Create Nodes and Filter duplicates (Points very close to each other)
+            const uniqueNodes: string[] = [];
+            let lastId = '';
+
+            pointsOnRoad.forEach(p => {
+                this.addNode(p);
+                const id = this.getNodeId(p);
+                if (id !== lastId) {
+                    uniqueNodes.push(id);
+                    lastId = id;
                 }
+            });
+
+            // Connect sequential nodes
+            for (let i = 0; i < uniqueNodes.length - 1; i++) {
+                this.addEdge(uniqueNodes[i], uniqueNodes[i + 1]);
             }
-        }
-    }
-
-    private connectToNearestOnRoad(nodeId: string, road: RoadSegment) {
-        const node = this.nodes.get(nodeId);
-        if (!node) return;
-
-        // Find the two closest nodes that are on this road's centerline
-        let closest1: GraphNode | null = null;
-        let closest2: GraphNode | null = null;
-        let dist1 = Infinity;
-        let dist2 = Infinity;
-
-        const cx = road.type === 'vertical' ? road.x + road.width / 2 : null;
-        const cy = road.type === 'horizontal' ? road.y + road.height / 2 : null;
-
-        for (const n of this.nodes.values()) {
-            if (n.id === nodeId) continue;
-
-            // Check if node is on this road's centerline
-            const onRoad = road.type === 'vertical'
-                ? Math.abs(n.x - cx!) < 5 && n.y >= road.y && n.y <= road.y + road.height
-                : Math.abs(n.y - cy!) < 5 && n.x >= road.x && n.x <= road.x + road.width;
-
-            if (onRoad) {
-                const d = Math.sqrt((n.x - node.x) ** 2 + (n.y - node.y) ** 2);
-                if (d < dist1) {
-                    dist2 = dist1;
-                    closest2 = closest1;
-                    dist1 = d;
-                    closest1 = n;
-                } else if (d < dist2) {
-                    dist2 = d;
-                    closest2 = n;
-                }
-            }
-        }
-
-        if (closest1) this.addEdge(nodeId, closest1.id);
-        if (closest2) this.addEdge(nodeId, closest2.id);
+        });
     }
 
     private getNodeId(p: Point): string {
+        // Use precision to ensure intersection matches
         return `${Math.round(p.x)},${Math.round(p.y)}`;
     }
 
@@ -287,16 +289,16 @@ export class RoadGraph {
 
         // Create spheres for nodes
         const nodeMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-        const nodeGeometry = new THREE.SphereGeometry(5, 8, 8);
+        const nodeGeometry = new THREE.SphereGeometry(8, 8, 8); // Slightly bigger for visibility
 
         // Create lines for edges
-        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
         const drawnEdges = new Set<string>();
 
         for (const node of this.nodes.values()) {
             // Node sphere - convert SVG coords to 3D: (x, height, y)
             const sphere = new THREE.Mesh(nodeGeometry, nodeMaterial);
-            sphere.position.set(node.x, 10, -node.y);
+            sphere.position.set(node.x, 2, node.y); // Lower height (2) to align with roads/cars
             this.debugGroup.add(sphere);
 
             // Edges
@@ -309,8 +311,8 @@ export class RoadGraph {
                 if (!conn) continue;
 
                 const points = [
-                    new THREE.Vector3(node.x, 10, -node.y),
-                    new THREE.Vector3(conn.x, 10, -conn.y)
+                    new THREE.Vector3(node.x, 2, node.y),
+                    new THREE.Vector3(conn.x, 2, conn.y)
                 ];
                 const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
                 const line = new THREE.Line(lineGeo, edgeMaterial);

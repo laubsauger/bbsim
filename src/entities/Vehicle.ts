@@ -156,7 +156,7 @@ export class Vehicle extends Agent {
             direction.y = 0; // Keep movement horizontal
             const dist = direction.length();
 
-            if (dist < 2) {
+            if (dist < 3) {
                 this.position.copy(this.target);
                 this.target = null;
                 this.currentSpeed = Math.max(0, this.currentSpeed - this.speed * 2 * delta);
@@ -167,9 +167,10 @@ export class Vehicle extends Agent {
                 // Accelerate toward target speed
                 this.currentSpeed = Math.min(this.speed, this.currentSpeed + this.speed * 2 * delta);
 
-                // Move forward
+                // Move forward without overshooting the target
                 direction.normalize();
-                this.position.add(direction.multiplyScalar(this.currentSpeed * delta));
+                const step = Math.min(dist, this.currentSpeed * delta);
+                this.position.add(direction.multiplyScalar(step));
             }
         } else {
             // No target - decelerate

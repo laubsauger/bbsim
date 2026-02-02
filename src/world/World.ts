@@ -11,8 +11,23 @@ export class World {
     load(data: MapData) {
         this.roads = data.road_segments;
 
+        // Specific lot assignments for key buildings
+        const SPECIAL_LOTS: Record<number, { usage: LotUsage; state: LotState }> = {
+            // The Bar area - top left corner
+            629: { usage: LotUsage.BAR, state: LotState.OCCUPIED },     // The Bar - second row, leftmost
+            624: { usage: LotUsage.PARKING, state: LotState.EMPTY },    // Parking - directly above bar
+            625: { usage: LotUsage.PARKING, state: LotState.EMPTY },    // Parking - above bar, to the right
+            628: { usage: LotUsage.PARKING, state: LotState.EMPTY },    // Parking - right of bar
+        };
+
         // Hydrate Lots with Simulation State
         this.lots = data.lots.map(raw => {
+            // Check for special lot assignments first
+            const special = SPECIAL_LOTS[raw.id];
+            if (special) {
+                return { ...raw, usage: special.usage, state: special.state };
+            }
+
             // Procedurally assign usage based on ID or random for now
             const rand = Math.random();
             let usage = LotUsage.RESIDENTIAL;

@@ -204,14 +204,30 @@ export class TouristSystem {
     }
 
     private getAttractionTarget(): THREE.Vector3 {
-        const isOpen = this.currentHour >= 9 && this.currentHour < 20;
+        const isBusinessOpen = this.currentHour >= 9 && this.currentHour < 20;
+        const isBarOpen = this.currentHour >= 11 || this.currentHour < 1; // 11am to 1am (also a restaurant)
+
         const candidates = this.lots.filter(lot =>
-            lot.usage === LotUsage.PUBLIC || (lot.usage === LotUsage.COMMERCIAL && isOpen)
+            lot.usage === LotUsage.PUBLIC ||
+            (lot.usage === LotUsage.COMMERCIAL && isBusinessOpen) ||
+            (lot.usage === LotUsage.BAR && isBarOpen)
         );
+
         if (candidates.length === 0) {
             return this.pathSystem.getRandomPointOnSidewalk();
         }
-        const lot = candidates[Math.floor(Math.random() * candidates.length)];
+
+        // Weight bar more heavily in evening hours
+        let lot: Lot;
+        const barLot = candidates.find(l => l.usage === LotUsage.BAR);
+        const isEveningHours = this.currentHour >= 18 || this.currentHour < 1;
+        if (barLot && isBarOpen && Math.random() < (isEveningHours ? 0.4 : 0.2)) {
+            // Higher chance to visit bar in evening, lower during day (restaurant hours)
+            lot = barLot;
+        } else {
+            lot = candidates[Math.floor(Math.random() * candidates.length)];
+        }
+
         const point = this.getRandomPointInLot(lot);
         return new THREE.Vector3(point.x, 2, point.y);
     }
@@ -255,10 +271,16 @@ export class TouristSystem {
         const maxX = Math.max(...lot.points.map(p => p.x));
         const minY = Math.min(...lot.points.map(p => p.y));
         const maxY = Math.max(...lot.points.map(p => p.y));
+        const margin = 8;
+        const insetMinX = minX + margin;
+        const insetMaxX = maxX - margin;
+        const insetMinY = minY + margin;
+        const insetMaxY = maxY - margin;
+        const useInset = insetMinX < insetMaxX && insetMinY < insetMaxY;
 
-        for (let i = 0; i < 20; i++) {
-            const x = minX + Math.random() * (maxX - minX);
-            const y = minY + Math.random() * (maxY - minY);
+        for (let i = 0; i < 24; i++) {
+            const x = (useInset ? insetMinX : minX) + Math.random() * ((useInset ? insetMaxX : maxX) - (useInset ? insetMinX : minX));
+            const y = (useInset ? insetMinY : minY) + Math.random() * ((useInset ? insetMaxY : maxY) - (useInset ? insetMinY : minY));
             if (this.isPointInLot(x, y, lot.points)) {
                 return { x, y };
             }

@@ -77,7 +77,7 @@ export class MapRenderer {
                 this.mapGroup.add(mesh);
             }
         });
-        // Flip Z scale to match SVG coordinate system orientation
+        // Legacy renderer: flips Z to match older SVG orientation (not used by WorldRenderer).
         this.mapGroup.scale.z = -1;
     }
 
@@ -89,14 +89,8 @@ export class MapRenderer {
 
             mesh.rotation.x = -Math.PI / 2;
 
-            // Position manually to match transposed coordinates
-            // Z needs to be negative because we flip the group scale Z (?)
-            // Actually, if Group.scale.z = -1.
-            // And we want Road at Logical (x, y_svg).
-            // Logic Lot: (x, 0, -y_svg). Group -> (x, 0, y_svg).
-            // Logic Road need: (x, 0, y_svg).
-            // So Road Mesh Position should be (x, 0, -y_svg).
-            // Yes.
+            // Legacy renderer uses flipped Z (group.scale.z = -1).
+            // This path is kept for reference and isn't used by the main world renderer.
 
             mesh.position.set(seg.x + seg.width / 2, 0.05, -(seg.y + seg.height / 2));
 

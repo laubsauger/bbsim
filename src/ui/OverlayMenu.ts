@@ -34,7 +34,7 @@ export class OverlayMenu {
         this.onChange = config.onChange;
         this.state = {
             status: false,  // Default off for clean view
-            zoning: true,
+            zoning: false,  // Default off for clean view
             addresses: false,
             prices: false,
             noise: false,

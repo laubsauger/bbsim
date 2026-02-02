@@ -16,6 +16,7 @@ export enum LotUsage {
     COMMERCIAL = 'commercial',
     LODGING = 'lodging',
     PUBLIC = 'public',
+    PARKING = 'parking',
     // Specialized in-town buildings
     BAR = 'bar',
     CHURCH = 'church'

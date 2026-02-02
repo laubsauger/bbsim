@@ -31,29 +31,30 @@
 ## Phase 1: Passive Simulation
 
 ### 1.1 Buildings
-- [ ] Define building types (residential, commercial, art installations)
+- [ ] Define building types (residential, commercial, art installations) - Done in types.ts
 - [ ] Create procedural building generator
 - [x] Place buildings on lots (Base Geometry)
 - [ ] Add building details (windows, doors, signs)
 
 ### 1.2 NPC System
 - [x] Create NPC data structure (Agent class)
-- [ ] Implement basic pathfinding on road network (Strict)
+- [x] Implement basic pathfinding on road network (Strict) - RoadGraph/PedestrianGraph
 - [x] Create daily schedule system (TimeSystem)
-- [ ] Implement state machine for NPC behaviors
+- [x] Implement state machine for NPC behaviors
 
 ### 1.3 NPC Behaviors
-- [ ] Wake up / go to sleep routines
-- [ ] Walking between locations
-- [ ] Work activities
-- [ ] Social interactions (talking, gathering)
-- [ ] Random idle behaviors
+- [x] Wake up / go to sleep routines
+- [x] Walking between locations
+- [x] Work activities (Job assignments)
+- [x] Social interactions (Visiting friends)
+- [x] Random idle behaviors (Wandering)
 
 ### 1.4 Vehicles
 - [x] Car models (Base Geometry)
-- [x] Vehicle pathfinding on roads (Random)
-- [ ] Parking behavior
-- [ ] Occasional through-traffic
+- [x] Vehicle pathfinding on roads (A*)
+- [x] Parking behavior (Lot entry/exit)
+- [x] Occasional through-traffic (Tourists)
+- [x] Service Vehicles (School Bus, Sheriff)
 
 ### 1.5 Ambient Life
 - [ ] Birds (flying, perching)
@@ -62,8 +63,8 @@
 - [ ] Wind effects on objects
 
 ### 1.6 Time & Weather
-- [ ] Complete day/night cycle
-- [ ] Sunrise/sunset colors
+- [x] Complete day/night cycle
+- [x] Sunrise/sunset colors
 - [ ] Temperature simulation (heat shimmer)
 - [ ] Occasional dust storms
 - [ ] Rare rain events

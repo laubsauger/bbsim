@@ -100,7 +100,7 @@ export class PathfindingSystem {
         const pathPoints = this.graph.findPath(fromSvg, toSvg);
 
         if (pathPoints.length > 1) {
-            // Convert SVG path to 3D: (x, height, -y)
+            // Convert SVG path to 3D: (x, height, y)
             return pathPoints.slice(1).map(p => this.toWorld(p, 1));
         }
         return [];
@@ -129,6 +129,9 @@ export class PathfindingSystem {
                 prePath.push(this.toWorld(gate, 1));
                 startPoint = gate;
                 if (agent) agent.lastGate = gate;
+            } else if (this.debugPedExitCount < 20) {
+                console.warn(`[PedestrianExit] No gate for lot ${fromLot.id} at (${fromSvg.x.toFixed(1)}, ${fromSvg.y.toFixed(1)})`);
+                this.debugPedExitCount++;
             }
         }
 
@@ -136,6 +139,13 @@ export class PathfindingSystem {
             const nearestSidewalk = this.getNearestSidewalkPoint(startPoint.x, startPoint.y);
             prePath.push(this.toWorld(nearestSidewalk, 1));
             startPoint = nearestSidewalk;
+            if (this.debugPedExitCount < 20) {
+                const dx = nearestSidewalk.x - (agent?.lastGate?.x ?? fromSvg.x);
+                const dy = nearestSidewalk.y - (agent?.lastGate?.y ?? fromSvg.y);
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                console.warn(`[PedestrianExit] Snap to sidewalk dist=${dist.toFixed(1)} from (${fromSvg.x.toFixed(1)}, ${fromSvg.y.toFixed(1)})`);
+                this.debugPedExitCount++;
+            }
         }
 
         let endPoint = { ...toSvg };
@@ -179,6 +189,18 @@ export class PathfindingSystem {
         const toSvg = this.toSvg(to);
         const destinationLot = this.findLotContainingPoint(toSvg, lots);
 
+        // If destination is on a road, ignore lot containment to keep vehicles on the road network
+        if (this.isOnRoad(toSvg.x, toSvg.y)) {
+            if (destinationLot && this.debugVehicleOffroadCount < 30) {
+                console.warn(`[VehicleRoad] Destination on road but inside lot ${destinationLot.id}, skipping lot entry`);
+                this.debugVehicleOffroadCount++;
+            }
+            if (vehicle) {
+                (vehicle as any).parkingLeg = [];
+            }
+            return this.getPathTo(from, to);
+        }
+
         if (!destinationLot) {
             if (vehicle) {
                 (vehicle as any).parkingLeg = [];
@@ -203,16 +225,40 @@ export class PathfindingSystem {
             startPoint = nearestRoad;
         }
 
-        const pathPoints = this.graph.findPath(startPoint, accessPoint);
-        const graphPath = pathPoints.length > 1
-            ? pathPoints.slice(1).map(p => this.toWorld(p, 1))
-            : [];
+        // Optimization: If on the same road segment, drive directly logic (prevents U-turns on simple graph)
+        const startRoad = this.getRoadAt(startPoint.x, startPoint.y);
+        const endRoad = this.getRoadAt(accessPoint.x, accessPoint.y);
 
-        const finalLeg: THREE.Vector3[] = [
-            this.toWorld(accessPoint, 1),
-            this.toWorld(parkingSpot, 1),
-            this.toWorld(toSvg, 1),
-        ];
+        let graphPath: THREE.Vector3[] = [];
+
+
+        if (startRoad && endRoad && startRoad === endRoad) {
+            // On same road - allow direct travel along the road
+
+        } else {
+            const pathPoints = this.graph.findPath(startPoint, accessPoint);
+            if (pathPoints.length <= 1) {
+                // Throttled logging
+                if (Math.random() < 0.05) {
+                    console.warn(`[Pathfinding] No graph path found from (${startPoint.x.toFixed(0)},${startPoint.y.toFixed(0)}) to (${accessPoint.x.toFixed(0)},${accessPoint.y.toFixed(0)}) (Sampled Log)`);
+                }
+            }
+            graphPath = pathPoints.length > 1
+                ? pathPoints.slice(1).map(p => this.toWorld(p, 1))
+                : [];
+        }
+
+        const finalLeg: THREE.Vector3[] = [];
+        if (destinationLot && destinationLot.roadAccessPoint) {
+            const nearRoad = this.toWorld(accessPoint, 1);
+            const parkPoint = this.toWorld(parkingSpot, 1);
+            const driveIn = this.getDriveInPoint(destinationLot, parkingSpot, 8);
+            // Vehicles enter via Drive-In point (Gateway) then Park - Correct Order creates smooth entry
+            finalLeg.push(nearRoad, this.toWorld(driveIn, 1), parkPoint);
+        } else {
+            // If no explicit access, stay on the road network
+            finalLeg.push(this.toWorld(accessPoint, 1));
+        }
 
         if (vehicle) {
             (vehicle as any).parkingLeg = finalLeg.map(p => p.clone());
@@ -408,6 +454,9 @@ export class PathfindingSystem {
     }
 
     private debugLogCount = 0;
+    private debugPedExitCount = 0;
+    private debugVehicleOffroadCount = 0;
+    private simTimeSeconds = 0;
 
     // Check if a point is on any road
     isOnRoad(x: number, y: number): boolean {
@@ -441,6 +490,22 @@ export class PathfindingSystem {
             }
         }
         return false;
+    }
+
+    private getRoadAt(x: number, y: number): RoadSegment | null {
+        const padding = 2; // Strict check
+        for (const road of this.roads) {
+            if (road.type === 'vertical') {
+                const inX = x >= road.x - padding && x <= road.x + road.width + padding;
+                const inY = y >= road.y - padding && y <= road.y + road.height + padding;
+                if (inX && inY) return road;
+            } else {
+                const inX = x >= road.x - padding && x <= road.x + road.width + padding;
+                const inY = y >= road.y - padding && y <= road.y + road.height + padding;
+                if (inX && inY) return road;
+            }
+        }
+        return null;
     }
 
     // Get nearest point on any road
@@ -519,7 +584,8 @@ export class PathfindingSystem {
 
     private isLotAllowedForPedestrian(agent: any, lot: Lot): boolean {
         if (!agent) return lot.usage !== LotUsage.RESIDENTIAL;
-        if (agent.type === AgentType.CAT) return true;
+        if (agent instanceof Vehicle) return true; // Vehicles (cars) are allowed on lots (parking)
+        if (agent.type === AgentType.CAT || agent.type === AgentType.DOG) return true;
         if (Array.isArray(agent.allowedLots) && agent.allowedLots.includes(lot.id)) return true;
         const isResident = agent.data?.homeLot;
         if (isResident && agent.data.homeLot.id === lot.id) return true;
@@ -537,42 +603,104 @@ export class PathfindingSystem {
         return Math.random() < chance;
     }
 
-    private getRandomPointInLot(lot: Lot): Point {
+    private getRandomPointInLot(lot: Lot, options: { margin?: number; bias?: Point; radius?: number; attempts?: number } = {}): Point {
         if (lot.points.length === 0) return { x: 0, y: 0 };
         const minX = Math.min(...lot.points.map(p => p.x));
         const maxX = Math.max(...lot.points.map(p => p.x));
         const minY = Math.min(...lot.points.map(p => p.y));
         const maxY = Math.max(...lot.points.map(p => p.y));
+        const margin = options.margin ?? 8;
+        const attempts = options.attempts ?? 24;
+        const insetMinX = minX + margin;
+        const insetMaxX = maxX - margin;
+        const insetMinY = minY + margin;
+        const insetMaxY = maxY - margin;
+        const useInset = insetMinX < insetMaxX && insetMinY < insetMaxY;
 
-        for (let i = 0; i < 20; i++) {
-            const x = minX + Math.random() * (maxX - minX);
-            const y = minY + Math.random() * (maxY - minY);
+        const tryPoint = (x: number, y: number) => {
             if (this.isPointInLot(x, y, lot.points)) {
                 return { x, y };
             }
+            return null;
+        };
+
+        if (options.bias) {
+            const radius = options.radius ?? 60;
+            for (let i = 0; i < Math.min(12, attempts); i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const r = Math.sqrt(Math.random()) * radius;
+                const x = options.bias.x + Math.cos(angle) * r;
+                const y = options.bias.y + Math.sin(angle) * r;
+                if (useInset && (x < insetMinX || x > insetMaxX || y < insetMinY || y > insetMaxY)) continue;
+                const hit = tryPoint(x, y);
+                if (hit) return hit;
+            }
+        }
+
+        for (let i = 0; i < attempts; i++) {
+            const x = (useInset ? insetMinX : minX) + Math.random() * ((useInset ? insetMaxX : maxX) - (useInset ? insetMinX : minX));
+            const y = (useInset ? insetMinY : minY) + Math.random() * ((useInset ? insetMaxY : maxY) - (useInset ? insetMinY : minY));
+            const hit = tryPoint(x, y);
+            if (hit) return hit;
         }
         return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
     }
 
     private getRandomPedestrianDestination(agent: any): THREE.Vector3 {
+        const currentSvg = this.toSvg(agent.position);
+        const currentLot = this.findLotContainingPoint(currentSvg, this.lots);
         const homeLot = agent.data?.homeLot;
-        if (agent.type === AgentType.CAT && homeLot && Math.random() < 0.5) {
-            const point = this.getRandomPointInLot(homeLot);
+        if (agent.type === AgentType.CAT && homeLot && Math.random() < 0.65) {
+            const point = this.getHomeWanderPoint(agent, homeLot, currentSvg);
             return this.toWorld(point, 2);
         }
-        if (homeLot && Math.random() < 0.6) {
-            const point = this.getRandomPointInLot(homeLot);
+        if (homeLot && Math.random() < 0.82) {
+            const point = this.getHomeWanderPoint(agent, homeLot, currentSvg);
             return this.toWorld(point, 2);
         }
 
         const allowedLots = this.lots.filter(lot => this.isLotAllowedForPedestrian(agent, lot));
         if (allowedLots.length > 0 && Math.random() < (agent.type === AgentType.CAT ? 0.35 : 0.25)) {
             const lot = allowedLots[Math.floor(Math.random() * allowedLots.length)];
-            const point = this.getRandomPointInLot(lot);
+            const point = this.getRandomPointInLot(lot, { margin: 8 });
             return this.toWorld(point, 2);
         }
 
+        if (currentLot && homeLot && currentLot.id === homeLot.id) {
+            const nextExit = agent.nextExitTime as number | undefined;
+            if (nextExit && this.simTimeSeconds < nextExit) {
+                const point = this.getHomeWanderPoint(agent, homeLot, currentSvg);
+                return this.toWorld(point, 2);
+            }
+            agent.nextExitTime = this.simTimeSeconds + 90 + Math.random() * 90;
+        }
+
+        if (this.debugPedExitCount < 30) {
+            console.warn(`[PedestrianExit] ${agent.id} leaving lot via sidewalk`);
+            this.debugPedExitCount++;
+        }
         return this.getRandomPointOnSidewalk();
+    }
+
+    private getHomeWanderPoint(agent: any, homeLot: Lot, currentSvg: Point): Point {
+        const gate = this.getNearestGate(homeLot, currentSvg);
+        const center = {
+            x: homeLot.points.reduce((s, p) => s + p.x, 0) / homeLot.points.length,
+            y: homeLot.points.reduce((s, p) => s + p.y, 0) / homeLot.points.length,
+        };
+        if (gate) {
+            const dx = center.x - gate.x;
+            const dy = center.y - gate.y;
+            const len = Math.sqrt(dx * dx + dy * dy) || 1;
+            // Bias towards the "front yard" (between gate and house center)
+            const bias = { x: center.x + (dx / len) * 18, y: center.y + (dy / len) * 18 };
+            // Allow larger radius for front yard
+            return this.getRandomPointInLot(homeLot, { margin: 10, bias, radius: 120 });
+        }
+
+        // Randomly pick a spot in the entire lot (no bias to current position)
+        // This prevents agents from getting stuck in a local loop
+        return this.getRandomPointInLot(homeLot, { margin: 10 });
     }
 
     private findLotContainingPoint(point: Point, lots: Lot[]): Lot | null {
@@ -583,6 +711,21 @@ export class PathfindingSystem {
             }
         }
         return null;
+    }
+
+    private getDriveInPoint(lot: Lot, from: Point, distance: number): Point {
+        const center = {
+            x: lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length,
+            y: lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length,
+        };
+        const dx = center.x - from.x;
+        const dy = center.y - from.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const candidate = { x: from.x + (dx / len) * distance, y: from.y + (dy / len) * distance };
+        if (this.isPointInLot(candidate.x, candidate.y, lot.points)) {
+            return candidate;
+        }
+        return from;
     }
 
     private isPointInLot(x: number, y: number, points: Point[]): boolean {
@@ -619,6 +762,7 @@ export class PathfindingSystem {
     }
 
     updateTraffic(agents: any[], delta: number) {
+        this.simTimeSeconds += delta;
         if (this.parkingLegGroup) {
             this.updateParkingLegDebug(agents);
         }
@@ -628,11 +772,33 @@ export class PathfindingSystem {
                 return;
             }
 
+            // Vehicles should not be affected by pedestrian separation forces
+            if (agent instanceof Vehicle) {
+                const currentSvg = this.toSvg(agent.position);
+                const currentLot = this.findLotContainingPoint(currentSvg, this.lots);
+                const nearest = this.getNearestRoadPoint(currentSvg.x, currentSvg.y);
+                const dx = nearest.x - currentSvg.x;
+                const dy = nearest.y - currentSvg.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (!currentLot && dist > 18) {
+                    // Hard-correct cars that drift off the road
+                    agent.position.x = nearest.x;
+                    agent.position.z = nearest.y;
+                    agent.target = null;
+                    agent.path = [];
+                }
+                if (!currentLot && !this.isOnRoad(currentSvg.x, currentSvg.y) && this.debugVehicleOffroadCount < 20) {
+                    console.warn(`[VehicleRoad] ${agent.id} off-road by ${dist.toFixed(1)} at (${currentSvg.x.toFixed(1)}, ${currentSvg.y.toFixed(1)})`);
+                    this.debugVehicleOffroadCount++;
+                }
+            }
+
             // COLLISION AVOIDANCE / SEPARATION
             // Apply a repulsion force from nearby agents to prevent bunching
             const isResident = agent instanceof Resident;
             // Skip for drivers/passengers (isInCar)
-            if (agent.behaviorState !== ResidentState.DRIVING &&
+            if (!(agent instanceof Vehicle) &&
+                agent.behaviorState !== ResidentState.DRIVING &&
                 !(isResident && agent.isInCar)) {
 
                 const separationRadius = 10; // Separation distance
@@ -670,6 +836,12 @@ export class PathfindingSystem {
             // Skip residents who are at home idle or have intentional destinations
             if (agent.behaviorState !== undefined) {
                 const state = agent.behaviorState as ResidentState;
+
+                // Agents in cars (Drivers/Passengers) follow the Vehicle, not their own pathing
+                if (state === ResidentState.DRIVING || (agent as Resident).isInCar) {
+                    return;
+                }
+
                 // Don't assign random paths to residents at home or with specific destinations
                 if (state === ResidentState.IDLE_HOME) {
                     return;
@@ -703,9 +875,9 @@ export class PathfindingSystem {
             // If no path and no target, pick a new destination
             if ((!agent.path || agent.path.length === 0) && !agent.target) {
                 // Get current position in SVG coordinates
-            // 3D (x, y, z) → SVG (x, y): svgX = position.x, svgY = position.z
-            const currentSvgX = agent.position.x;
-            const currentSvgY = agent.position.z;
+                // 3D (x, y, z) → SVG (x, y): svgX = position.x, svgY = position.z
+                const currentSvgX = agent.position.x;
+                const currentSvgY = agent.position.z;
 
                 const isPedestrian = this.isPedestrian(agent);
                 const onNetwork = isPedestrian
@@ -787,11 +959,30 @@ export class PathfindingSystem {
                     }
                     if (!isPrePathPoint) {
                         const nextSvg = this.toSvg(next);
-                        const nextLot = this.findLotContainingPoint(nextSvg, this.lots);
-                        if (nextLot && !this.isLotAllowedForPedestrian(agent, nextLot)) {
-                            agent.path = [];
-                            agent.target = null;
-                            return;
+
+                        // FIX: Allow movement if point is on public network (sidewalk/road), ignoring lot boundaries
+                        // This prevents agents getting stuck when sidewalks overlap with lot coordinates
+                        const onPublicPath = this.isOnSidewalk(nextSvg.x, nextSvg.y) || this.isOnRoad(nextSvg.x, nextSvg.y);
+
+                        if (!onPublicPath) {
+                            const nextLot = this.findLotContainingPoint(nextSvg, this.lots);
+                            const currentSvg = this.toSvg(agent.position);
+                            const currentLot = this.findLotContainingPoint(currentSvg, this.lots);
+                            const gateNearby = currentLot?.gatePositions?.some(g => {
+                                const dx = g.x - nextSvg.x;
+                                const dy = g.y - nextSvg.y;
+                                return Math.sqrt(dx * dx + dy * dy) < 8;
+                            }) ?? false;
+
+                            if (nextLot && !this.isLotAllowedForPedestrian(agent, nextLot) && !gateNearby) {
+                                if (this.debugPedExitCount < 40) {
+                                    console.warn(`[PedestrianExit] Blocked ${agent.id} nextLot=${nextLot.id} currentLot=${currentLot?.id ?? 'none'} next=(${nextSvg.x.toFixed(1)},${nextSvg.y.toFixed(1)})`);
+                                    this.debugPedExitCount++;
+                                }
+                                agent.path = [];
+                                agent.target = null;
+                                return;
+                            }
                         }
                     }
                 }

@@ -23,6 +23,11 @@ import { SelectionHighlighter } from '../ui/SelectionHighlighter';
 import { Topbar, FocusMode } from '../ui/Topbar';
 import { TouristSystem } from '../systems/TouristSystem';
 import { ResidentScheduleSystem } from '../systems/ResidentScheduleSystem';
+import { EventSystem } from '../systems/EventSystem';
+import { SchoolBusSystem } from '../systems/SchoolBusSystem';
+import { SheriffSystem } from '../systems/SheriffSystem';
+import { EventLog } from '../ui/EventLog';
+import { SchoolBus } from '../entities/SchoolBus';
 
 async function init() {
     // --- 1. Systems Setup ---
@@ -33,6 +38,10 @@ async function init() {
     let touristSystem: TouristSystem | null = null;
     let residentScheduleSystem: ResidentScheduleSystem | null = null;
     let addressSystem: AddressSystem;
+    let eventSystem: EventSystem;
+    let schoolBusSystem: SchoolBusSystem | null = null;
+    let sheriffSystem: SheriffSystem | null = null;
+    let eventLog: EventLog;
 
     // --- 2. Graphics Setup ---
     const scene = new THREE.Scene();
@@ -176,6 +185,8 @@ async function init() {
         roadBounds?: { minX: number; maxX: number; minY: number; maxY: number } | null;
         pedBounds?: { minX: number; maxX: number; minY: number; maxY: number } | null;
         agentBounds?: { minX: number; maxX: number; minZ: number; maxZ: number } | null;
+        worldBoundsCentered?: { minX: number; maxX: number; minZ: number; maxZ: number } | null;
+        sampleAgents?: { id: string; x: number; z: number; svgX: number; svgY: number; inBounds: boolean }[];
     }) => {
         console.warn(`[Diagnostics] ${label}`);
         if (data.worldBounds) {
@@ -183,6 +194,9 @@ async function init() {
         }
         if (data.groupPos) {
             console.warn(`  world group position: x=${data.groupPos.x.toFixed(1)} y=${data.groupPos.y.toFixed(1)} z=${data.groupPos.z.toFixed(1)}`);
+        }
+        if (data.worldBoundsCentered) {
+            console.warn(`  world(centered): x:[${data.worldBoundsCentered.minX.toFixed(1)}, ${data.worldBoundsCentered.maxX.toFixed(1)}] z:[${data.worldBoundsCentered.minZ.toFixed(1)}, ${data.worldBoundsCentered.maxZ.toFixed(1)}]`);
         }
         if (data.roadBounds) {
             console.warn(`  road graph(svg): ${formatBounds(data.roadBounds)}`);
@@ -192,6 +206,11 @@ async function init() {
         }
         if (data.agentBounds) {
             console.warn(`  agents(world): x:[${data.agentBounds.minX.toFixed(1)}, ${data.agentBounds.maxX.toFixed(1)}] z:[${data.agentBounds.minZ.toFixed(1)}, ${data.agentBounds.maxZ.toFixed(1)}]`);
+        }
+        if (data.sampleAgents && data.sampleAgents.length > 0) {
+            data.sampleAgents.forEach(agent => {
+                console.warn(`  agent ${agent.id}: world(x=${agent.x.toFixed(1)}, z=${agent.z.toFixed(1)}) svg(x=${agent.svgX.toFixed(1)}, y=${agent.svgY.toFixed(1)}) inBounds=${agent.inBounds}`);
+            });
         }
     };
 
@@ -224,23 +243,28 @@ async function init() {
         </div>
         <div style="margin-bottom: 6px;">
             <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 3px;">Zoning</div>
-            <div style="display: flex; gap: 8px; flex-wrap: nowrap;">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                 <span><span style="color: #4A7A4A">■</span> Residential</span>
                 <span><span style="color: #7A5A3A">■</span> Commercial</span>
                 <span><span style="color: #5A5A7A">■</span> Public</span>
                 <span><span style="color: #6A4A6A">■</span> Lodging</span>
+                <span><span style="color: #CD853F">■</span> Bar</span>
+                <span><span style="color: #8A7A9A">■</span> Church</span>
+                <span><span style="color: #3A3A3A">■</span> Parking</span>
                 <span><span style="color: #5A5A5A">■</span> Vacant</span>
             </div>
         </div>
         <div>
             <div style="color: #777; font-size: 9px; text-transform: uppercase; margin-bottom: 3px;">Entities</div>
-            <div style="display: flex; gap: 6px; flex-wrap: nowrap;">
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
                 <span><span style="color: #22CC66">●</span> Resident</span>
                 <span><span style="color: #FFAA33">●</span> Tourist</span>
                 <span><span style="color: #CD853F">●</span> Dog</span>
                 <span><span style="color: #E8E8E8">●</span> Cat</span>
                 <span><span style="color: #CC3333">■</span> Car</span>
                 <span><span style="color: #4ECDC4">■</span> Rental</span>
+                <span><span style="color: #5B8DEE">■</span> Sheriff</span>
+                <span><span style="color: #FFB800">■</span> Bus</span>
             </div>
         </div>
     `;
@@ -334,6 +358,9 @@ async function init() {
         commercial: 0x7A5A3A,
         public: 0x5A5A7A,
         lodging: 0x6A4A6A,
+        bar: 0xCD853F,
+        church: 0x8A7A9A,
+        parking: 0x3A3A3A,
         vacant: 0x5A5A5A,
     };
 
@@ -397,6 +424,15 @@ async function init() {
         }
     });
 
+    // Event Log
+    eventLog = new EventLog();
+
+    // Event System
+    eventSystem = new EventSystem();
+    eventSystem.onAny((event, day) => {
+        eventLog.addTownEvent(event, day, timeSystem.time.totalSeconds);
+    });
+
     const topbar = new Topbar({
         onToggleOverlay: (visible) => {
             overlayMenu.container.style.display = visible ? 'flex' : 'none';
@@ -407,6 +443,9 @@ async function init() {
         },
         onToggleExplorer: (visible) => {
             entityExplorer.setVisible(visible);
+        },
+        onToggleEventLog: (visible) => {
+            eventLog.setVisible(visible);
         },
         onToggleHighlights: (enabled) => {
             selectionHighlighter.setEnabled(enabled);
@@ -538,7 +577,13 @@ async function init() {
         }
 
         const agentBounds = computeAgentBounds(agents);
-        logDiagnostics('Post-spawn bounds', { agentBounds });
+        const sampleAgents = agents.slice(0, 5).map(agent => {
+            const svgX = agent.position.x;
+            const svgY = agent.position.z;
+            const inBounds = svgX >= world.bounds.minX && svgX <= world.bounds.maxX && svgY >= world.bounds.minY && svgY <= world.bounds.maxY;
+            return { id: agent.id, x: agent.position.x, z: agent.position.z, svgX, svgY, inBounds };
+        });
+        logDiagnostics('Post-spawn bounds', { agentBounds, sampleAgents });
     }
 
     try {
@@ -562,9 +607,16 @@ async function init() {
 
         pathSystem = new PathfindingSystem(world.roads);
         pathSystem.computeAccessPoints(world.lots);
+        const centeredBounds = {
+            minX: world.bounds.minX + worldRenderer.group.position.x,
+            maxX: world.bounds.maxX + worldRenderer.group.position.x,
+            minZ: world.bounds.minY + worldRenderer.group.position.z,
+            maxZ: world.bounds.maxY + worldRenderer.group.position.z,
+        };
         logDiagnostics('World + graphs', {
             worldBounds: world.bounds,
             groupPos: worldRenderer.group.position,
+            worldBoundsCentered: centeredBounds,
             roadBounds: pathSystem.graph.getBounds(),
             pedBounds: pathSystem.pedestrianGraph.getBounds(),
         });
@@ -609,6 +661,60 @@ async function init() {
             worldBounds: world.bounds,
         });
 
+        // School Bus System
+        schoolBusSystem = new SchoolBusSystem({
+            lots: world.lots,
+            pathSystem,
+            eventSystem,
+            worldBounds: world.bounds,
+            onAddAgent: (agent) => {
+                agents.push(agent as any);
+                if (agent instanceof SchoolBus) {
+                    worldRenderer.group.add(agent.busGroup);
+                    eventLog.addArrival('school_bus', 'School Bus', timeSystem.time.day, timeSystem.time.totalSeconds);
+                } else {
+                    worldRenderer.group.add((agent as any).mesh);
+                }
+            },
+            onRemoveAgent: (agent) => {
+                const idx = agents.indexOf(agent as any);
+                if (idx >= 0) agents.splice(idx, 1);
+                if (agent instanceof SchoolBus) {
+                    worldRenderer.group.remove(agent.busGroup);
+                    eventLog.addDeparture('school_bus', 'School Bus', timeSystem.time.day, timeSystem.time.totalSeconds);
+                } else {
+                    worldRenderer.group.remove((agent as any).mesh);
+                }
+            }
+        });
+
+        // Sheriff System
+        sheriffSystem = new SheriffSystem({
+            lots: world.lots,
+            pathSystem,
+            eventSystem,
+            worldBounds: world.bounds,
+            onAddAgent: (agent) => {
+                agents.push(agent as any);
+                if (agent instanceof Vehicle) {
+                    worldRenderer.group.add(agent.carGroup);
+                    eventLog.addArrival('sheriff', 'Sheriff', timeSystem.time.day, timeSystem.time.totalSeconds);
+                } else {
+                    worldRenderer.group.add((agent as any).mesh);
+                }
+            },
+            onRemoveAgent: (agent) => {
+                const idx = agents.indexOf(agent as any);
+                if (idx >= 0) agents.splice(idx, 1);
+                if (agent instanceof Vehicle) {
+                    worldRenderer.group.remove(agent.carGroup);
+                    eventLog.addDeparture('sheriff', 'Sheriff', timeSystem.time.day, timeSystem.time.totalSeconds);
+                } else {
+                    worldRenderer.group.remove((agent as any).mesh);
+                }
+            }
+        });
+
         if (touristSystem) {
             touristSystem.setTargetCount(simConfig.touristCount);
         }
@@ -647,10 +753,26 @@ async function init() {
                     touristSystem.update(timeSystem.time.totalSeconds, delta * timeScale, timeSystem.time.hour);
                 }
                 if (residentScheduleSystem) {
-                    residentScheduleSystem.update(timeSystem.time.totalSeconds, timeSystem.time.hour, populationSystem.residents);
+                    // Set day of week (0=Sunday, 1=Monday, etc.) based on game day
+                    residentScheduleSystem.setDayOfWeek(timeSystem.time.day % 7);
+                    residentScheduleSystem.update(timeSystem.time.totalSeconds, timeSystem.time.hour, populationSystem.residents, timeSystem.time.day);
                 }
                 if (pathSystem) {
                     pathSystem.setCurrentHour(timeSystem.time.hour);
+                }
+
+                // Update event system and scheduled systems
+                eventSystem.update(
+                    timeSystem.time.totalSeconds,
+                    timeSystem.time.day,
+                    timeSystem.time.hour,
+                    timeSystem.time.minute
+                );
+                if (schoolBusSystem) {
+                    schoolBusSystem.update(timeSystem.time.totalSeconds, delta * timeScale);
+                }
+                if (sheriffSystem) {
+                    sheriffSystem.update(timeSystem.time.totalSeconds, delta * timeScale);
                 }
             }
         }

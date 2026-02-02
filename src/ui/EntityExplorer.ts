@@ -1,4 +1,4 @@
-import { Resident, ResidentState } from '../entities/Resident';
+import { Resident, ResidentState, Chronotype, WorkSchedule, Lifestyle } from '../entities/Resident';
 import { Vehicle } from '../entities/Vehicle';
 import { Lot, LotState, AgentType } from '../types';
 import { Agent } from '../entities/Agent';
@@ -42,11 +42,19 @@ const LOT_STATE_LABELS: Record<LotState, string> = {
 };
 
 const BEHAVIOR_LABELS: Record<ResidentState, { label: string; color: string }> = {
-    [ResidentState.IDLE_HOME]: { label: 'Relaxing at home', color: '#50C878' },
+    [ResidentState.SLEEPING]: { label: 'Sleeping', color: '#6B5B95' },
+    [ResidentState.WAKING_UP]: { label: 'Waking up', color: '#8B7B9F' },
+    [ResidentState.IDLE_HOME]: { label: 'At home', color: '#50C878' },
+    [ResidentState.EATING]: { label: 'Eating', color: '#F7DC6F' },
     [ResidentState.WALKING_TO_CAR]: { label: 'Walking to car', color: '#FFB347' },
     [ResidentState.DRIVING]: { label: 'Driving', color: '#4ECDC4' },
     [ResidentState.WALKING_HOME]: { label: 'Heading home', color: '#88AAFF' },
     [ResidentState.WALKING_AROUND]: { label: 'Walking around', color: '#FFB347' },
+    [ResidentState.WORKING]: { label: 'Working', color: '#5DADE2' },
+    [ResidentState.SHOPPING]: { label: 'Shopping', color: '#F39C12' },
+    [ResidentState.AT_BAR]: { label: 'At the bar', color: '#CD853F' },
+    [ResidentState.SOCIALIZING]: { label: 'Visiting friends', color: '#E74C3C' },
+    [ResidentState.AT_CHURCH]: { label: 'At church', color: '#8A7A9A' },
 };
 
 const TOURIST_STATE_LABELS: Record<TouristState, string> = {
@@ -56,6 +64,29 @@ const TOURIST_STATE_LABELS: Record<TouristState, string> = {
     [TouristState.RETURNING_TO_CAR]: 'Returning to car',
     [TouristState.LEAVING]: 'Leaving',
     [TouristState.EXITED]: 'Left',
+};
+
+const CHRONOTYPE_LABELS: Record<Chronotype, string> = {
+    [Chronotype.EARLY_BIRD]: '🌅 Early Bird',
+    [Chronotype.NORMAL]: '☀️ Normal',
+    [Chronotype.NIGHT_OWL]: '🌙 Night Owl',
+};
+
+const WORK_SCHEDULE_LABELS: Record<WorkSchedule, string> = {
+    [WorkSchedule.UNEMPLOYED]: 'Unemployed',
+    [WorkSchedule.RETIRED]: 'Retired',
+    [WorkSchedule.DAY_SHIFT]: 'Day Shift',
+    [WorkSchedule.LATE_SHIFT]: 'Late Shift',
+    [WorkSchedule.NIGHT_SHIFT]: 'Night Shift',
+    [WorkSchedule.FREELANCE]: 'Freelance',
+    [WorkSchedule.PART_TIME]: 'Part-Time',
+};
+
+const LIFESTYLE_LABELS: Record<Lifestyle, string> = {
+    [Lifestyle.HOMEBODY]: '🏠 Homebody',
+    [Lifestyle.BALANCED]: '⚖️ Balanced',
+    [Lifestyle.SOCIAL_BUTTERFLY]: '🦋 Social Butterfly',
+    [Lifestyle.WORKAHOLIC]: '💼 Workaholic',
 };
 
 export class EntityExplorer {
@@ -355,12 +386,33 @@ export class EntityExplorer {
             const posStr = pos ? `${pos.x.toFixed(0)}, ${pos.z.toFixed(0)}` : '—';
             const pathLen = resident.path?.length || 0;
 
+            // Personality labels
+            const chronotypeLabel = CHRONOTYPE_LABELS[resident.data.chronotype] || 'Unknown';
+            const workLabel = WORK_SCHEDULE_LABELS[resident.data.workSchedule] || 'Unknown';
+            const lifestyleLabel = LIFESTYLE_LABELS[resident.data.lifestyle] || 'Unknown';
+
+            // Format wake/sleep times
+            const formatTime = (h: number) => {
+                const hours = Math.floor(h) % 24;
+                const mins = Math.round((h % 1) * 60);
+                return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+            };
+            const scheduleStr = `${formatTime(resident.data.wakeTime)} - ${formatTime(resident.data.sleepTime)}`;
+
             this.details.innerHTML = `
                 <div class="entity-explorer__detail-title">${resident.fullName}</div>
                 <div class="entity-explorer__detail-meta">Resident • ${resident.data.age} • ${resident.data.occupation}</div>
                 <div class="entity-explorer__detail-row">
                     <span class="entity-explorer__detail-pill" style="background: ${behavior.color}20; color: ${behavior.color};">${behavior.label}</span>
                     <span class="entity-explorer__detail-pill">${resident.isHome ? 'At home' : 'Out'}</span>
+                </div>
+                <div class="entity-explorer__detail-block">
+                    <div class="entity-explorer__detail-label">Personality</div>
+                    <div class="entity-explorer__detail-value">${chronotypeLabel} • ${lifestyleLabel}</div>
+                </div>
+                <div class="entity-explorer__detail-block">
+                    <div class="entity-explorer__detail-label">Schedule</div>
+                    <div class="entity-explorer__detail-value">${workLabel} • Awake ${scheduleStr}</div>
                 </div>
                 <div class="entity-explorer__detail-block">
                     <div class="entity-explorer__detail-label">Home</div>

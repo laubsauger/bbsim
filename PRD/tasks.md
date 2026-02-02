@@ -3,14 +3,14 @@
 ## Current Sprint: Visual Polish & Simulation
 
 ### In Progress
-- [ ] **TASK-041**: Implement sun position based on time (day/night cycle)
-- [ ] **TASK-020**: Define building type enum and data structure
+- [ ] **TASK-021**: Create simple box building generator (Procedural buildings)
+- [ ] **TASK-042**: Create day/night lighting transitions (Refinement)
+- [ ] **TASK-044**: Implement dust particle system
 
 ### Up Next
-- [ ] **TASK-042**: Create day/night lighting transitions
-- [ ] **TASK-021**: Create simple box building generator
-- [ ] **TASK-032**: Create A* pathfinding (strict road following)
-- [ ] **TASK-044**: Implement dust particle system
+- [ ] **TASK-050**: Birds (flying, perching)
+- [ ] **TASK-051**: Tumbleweeds
+- [ ] **TASK-024**: Add building detail props (doors, windows)
 
 ### Backlog
 
@@ -22,15 +22,8 @@
 #### Buildings
 - [ ] **TASK-022**: Add building placement logic per lot
 - [ ] **TASK-023**: Implement building instancing for performance
-- [ ] **TASK-024**: Add building detail props (doors, windows)
-
-#### NPCs
-- [ ] **TASK-034**: Create NPC state machine
-- [ ] **TASK-035**: Implement daily schedule integration with behaviors
 
 #### Ambient
-- [ ] **TASK-050**: Birds (flying, perching)
-- [ ] **TASK-051**: Tumbleweeds
 - [ ] **TASK-052**: Dust devils
 
 ---
@@ -54,11 +47,19 @@
 - [x] **TASK-015**: Fix z-fighting artifacts
 - [x] **TASK-016**: Implement ACES tone mapping
 - [x] **TASK-017**: Add hemisphere lighting for outdoor feel
+- [x] **TASK-041**: Implement sun position based on time (day/night cycle)
 
-### NPCs (030-039)
+### NPCs & Simulation (030-039)
 - [x] **TASK-030**: Create NPC data model (Agent class)
+- [x] **TASK-020**: Define building type enum and data structure
+- [x] **TASK-032**: Create A* pathfinding (RoadGraph & PedestrianGraph)
 - [x] **TASK-031**: Implement random pathfinding on roads
 - [x] **TASK-033**: Implement basic NPC/Vehicle movement
+- [x] **TASK-034**: Create NPC state machine (Resident behaviors)
+- [x] **TASK-035**: Implement daily schedule integration (ResidentScheduleSystem)
+- [x] **TASK-036**: Implement Tourist system (Spawning, Visiting, Leaving)
+- [x] **TASK-037**: Implement Service Vehicles (School Bus, Sheriff)
+- [x] **TASK-038**: Implement Address system
 
 ### Time/Weather (040-049)
 - [x] **TASK-040**: Create time system with speed controls

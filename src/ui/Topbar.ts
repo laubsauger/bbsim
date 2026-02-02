@@ -4,6 +4,7 @@ export interface TopbarConfig {
     onToggleOverlay?: (visible: boolean) => void;
     onToggleMinimap?: (visible: boolean) => void;
     onToggleExplorer?: (visible: boolean) => void;
+    onToggleEventLog?: (visible: boolean) => void;
     onToggleHighlights?: (enabled: boolean) => void;
     onSpeedChange?: (speed: number) => void;
     onFocusModeChange?: (mode: FocusMode) => void;
@@ -19,6 +20,7 @@ export class Topbar {
     private overlayToggle: HTMLButtonElement;
     private minimapToggle: HTMLButtonElement;
     private explorerToggle: HTMLButtonElement;
+    private eventLogToggle: HTMLButtonElement;
     private highlightToggle: HTMLButtonElement;
     private settingsToggle: HTMLButtonElement;
     private focusButtons: Map<FocusMode, HTMLButtonElement> = new Map();
@@ -31,6 +33,7 @@ export class Topbar {
         overlayVisible: true,
         minimapVisible: true,
         explorerVisible: true,
+        eventLogVisible: true,
         highlightsEnabled: true,
         focusMode: 'both' as FocusMode,
         speed: 60,
@@ -41,6 +44,7 @@ export class Topbar {
     private onToggleOverlay?: (visible: boolean) => void;
     private onToggleMinimap?: (visible: boolean) => void;
     private onToggleExplorer?: (visible: boolean) => void;
+    private onToggleEventLog?: (visible: boolean) => void;
     private onToggleHighlights?: (enabled: boolean) => void;
     private onSpeedChange?: (speed: number) => void;
     private onFocusModeChange?: (mode: FocusMode) => void;
@@ -51,6 +55,7 @@ export class Topbar {
         this.onToggleOverlay = config.onToggleOverlay;
         this.onToggleMinimap = config.onToggleMinimap;
         this.onToggleExplorer = config.onToggleExplorer;
+        this.onToggleEventLog = config.onToggleEventLog;
         this.onToggleHighlights = config.onToggleHighlights;
         this.onSpeedChange = config.onSpeedChange;
         this.onFocusModeChange = config.onFocusModeChange;
@@ -66,12 +71,13 @@ export class Topbar {
                 <button class="topbar__btn" data-action="overlay">Overlays</button>
                 <button class="topbar__btn" data-action="minimap">Minimap</button>
                 <button class="topbar__btn" data-action="explorer">Explorer</button>
+                <button class="topbar__btn" data-action="events">Events</button>
             </div>
             <div class="topbar__group topbar__group--center">
                 <div class="topbar__time">Time <span class="topbar__time-value">Day 1 08:00</span></div>
                 <div class="topbar__speed">
                     Speed <span class="topbar__speed-value">60</span>
-                    <input class="topbar__speed-input" type="range" min="0" max="36000" value="60" />
+                    <input class="topbar__speed-input" type="range" min="0" max="1000" value="118" />
                 </div>
             </div>
             <div class="topbar__group">
@@ -115,6 +121,7 @@ export class Topbar {
         this.overlayToggle = this.container.querySelector('[data-action="overlay"]') as HTMLButtonElement;
         this.minimapToggle = this.container.querySelector('[data-action="minimap"]') as HTMLButtonElement;
         this.explorerToggle = this.container.querySelector('[data-action="explorer"]') as HTMLButtonElement;
+        this.eventLogToggle = this.container.querySelector('[data-action="events"]') as HTMLButtonElement;
         this.highlightToggle = this.container.querySelector('[data-action="highlights"]') as HTMLButtonElement;
         this.settingsToggle = this.container.querySelector('[data-action="settings"]') as HTMLButtonElement;
         this.settingsPanel = this.container.querySelector('.topbar__panel') as HTMLDivElement;
@@ -141,12 +148,17 @@ export class Topbar {
         this.overlayToggle.addEventListener('click', () => this.setOverlayVisible(!this.state.overlayVisible, true));
         this.minimapToggle.addEventListener('click', () => this.setMinimapVisible(!this.state.minimapVisible, true));
         this.explorerToggle.addEventListener('click', () => this.setExplorerVisible(!this.state.explorerVisible, true));
+        this.eventLogToggle.addEventListener('click', () => this.setEventLogVisible(!this.state.eventLogVisible, true));
         this.highlightToggle.addEventListener('click', () => this.setHighlightsEnabled(!this.state.highlightsEnabled, true));
         this.settingsToggle.addEventListener('click', () => this.toggleSettingsPanel());
 
         this.speedInput.addEventListener('input', () => {
-            const value = Number(this.speedInput.value);
-            this.setSpeed(value, true);
+            const sliderVal = Number(this.speedInput.value);
+            // Cubic scaling: speed = max * (slider/max)^3
+            // Maps 0-1000 slider to 0-36000 speed with fine control at low end
+            const t = sliderVal / 1000;
+            const speed = Math.round(36000 * t * t * t);
+            this.setSpeed(speed, true, false); // Don't update slider while dragging
         });
 
         Object.entries(this.trespassInputs).forEach(([key, input]) => {
@@ -180,9 +192,15 @@ export class Topbar {
         this.timeValue.textContent = text;
     }
 
-    setSpeed(speed: number, emit: boolean = false) {
+    setSpeed(speed: number, emit: boolean = false, updateSlider: boolean = true) {
         this.state.speed = speed;
-        this.speedInput.value = String(speed);
+
+        if (updateSlider) {
+            // Inverse cubic: slider = max * (speed/max)^(1/3)
+            const t = Math.pow(Math.max(0, speed) / 36000, 1 / 3);
+            this.speedInput.value = String(Math.round(t * 1000));
+        }
+
         this.speedValue.textContent = String(speed);
         if (emit && this.onSpeedChange) this.onSpeedChange(speed);
     }
@@ -205,6 +223,12 @@ export class Topbar {
         if (emit && this.onToggleExplorer) this.onToggleExplorer(visible);
     }
 
+    setEventLogVisible(visible: boolean, emit: boolean = false) {
+        this.state.eventLogVisible = visible;
+        this.eventLogToggle.classList.toggle('active', visible);
+        if (emit && this.onToggleEventLog) this.onToggleEventLog(visible);
+    }
+
     setHighlightsEnabled(enabled: boolean, emit: boolean = false) {
         this.state.highlightsEnabled = enabled;
         this.highlightToggle.classList.toggle('active', enabled);
@@ -225,6 +249,7 @@ export class Topbar {
         this.setOverlayVisible(this.state.overlayVisible);
         this.setMinimapVisible(this.state.minimapVisible);
         this.setExplorerVisible(this.state.explorerVisible);
+        this.setEventLogVisible(this.state.eventLogVisible);
         this.setHighlightsEnabled(this.state.highlightsEnabled);
         this.setFocusMode(this.state.focusMode);
         this.setSpeed(this.state.speed);
@@ -306,11 +331,19 @@ export class Topbar {
                     white-space: nowrap;
                 }
 
-                .topbar__time-value,
+                .topbar__time-value {
+                    color: #F7E6C4;
+                    font-weight: 600;
+                    white-space: nowrap;
+                }
+
                 .topbar__speed-value {
                     color: #F7E6C4;
                     font-weight: 600;
                     white-space: nowrap;
+                    display: inline-block;
+                    min-width: 42px; /* Fixed width to prevent jumping */
+                    text-align: right;
                 }
 
                 .topbar__speed-input {

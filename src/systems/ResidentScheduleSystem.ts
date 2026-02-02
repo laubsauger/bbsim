@@ -1,191 +1,515 @@
 import * as THREE from 'three';
-import { Resident, ResidentState } from '../entities/Resident';
+import { Resident, ResidentState, WorkSchedule, Lifestyle, Chronotype } from '../entities/Resident';
 import { Lot, LotUsage } from '../types';
 import { PathfindingSystem } from './PathfindingSystem';
 
-type ScheduleSlot = 'night' | 'morning' | 'day' | 'evening';
-
-interface ScheduleData {
-    slot: ScheduleSlot;
+interface IndividualSchedule {
+    // Current activity tracking
+    currentActivity: ResidentState;
+    activityStartTime: number;
+    activityEndTime: number;
     destinationLot?: Lot;
-    nextWanderTime: number;
+
+    // Daily plan (regenerated each day)
+    dayPlan: ScheduledActivity[];
+    currentPlanIndex: number;
+    lastPlanDay: number;
+
+    // Out of town tracking
     outOfTownUntil?: number;
     leavingTown: boolean;
+}
+
+interface ScheduledActivity {
+    activity: ResidentState;
+    startHour: number;  // Hour of day (0-24)
+    endHour: number;
+    targetLot?: Lot;
+    priority: number;   // Higher = more important, won't be skipped
 }
 
 export interface ResidentScheduleConfig {
     lots: Lot[];
     pathSystem: PathfindingSystem;
     worldBounds: { minX: number; maxX: number; minY: number; maxY: number };
+    dayOfWeek?: number; // 0-6, Sunday = 0
 }
 
 export class ResidentScheduleSystem {
     private lots: Lot[];
     private pathSystem: PathfindingSystem;
     private bounds: ResidentScheduleConfig['worldBounds'];
-    private schedules: Map<string, ScheduleData> = new Map();
+    private schedules: Map<string, IndividualSchedule> = new Map();
+    private currentDay: number = 1;
+    private dayOfWeek: number = 0;
 
     constructor(config: ResidentScheduleConfig) {
         this.lots = config.lots;
         this.pathSystem = config.pathSystem;
         this.bounds = config.worldBounds;
+        this.dayOfWeek = config.dayOfWeek ?? 0;
     }
 
-    update(timeSeconds: number, hour: number, residents: Resident[]) {
+    setDayOfWeek(dow: number) {
+        this.dayOfWeek = dow;
+    }
+
+    update(timeSeconds: number, hour: number, residents: Resident[], day: number) {
+        this.currentDay = day;
+
         residents.forEach(resident => {
-            const data = this.getSchedule(resident, hour);
+            const schedule = this.getOrCreateSchedule(resident, day);
             resident.scheduleOverride = true;
 
-            if (data.outOfTownUntil && timeSeconds < data.outOfTownUntil) {
+            // Handle out of town
+            if (schedule.outOfTownUntil && timeSeconds < schedule.outOfTownUntil) {
                 return;
             }
-
-            if (data.outOfTownUntil && timeSeconds >= data.outOfTownUntil) {
+            if (schedule.outOfTownUntil && timeSeconds >= schedule.outOfTownUntil) {
                 this.returnFromTown(resident);
-                data.outOfTownUntil = undefined;
-                data.leavingTown = false;
+                schedule.outOfTownUntil = undefined;
+                schedule.leavingTown = false;
             }
 
-            if (data.leavingTown && resident.isInCar && resident.data.car) {
+            // Handle leaving town (driving to exit)
+            if (schedule.leavingTown && resident.isInCar && resident.data.car) {
                 if (!resident.data.car.target && resident.data.car.path.length === 0) {
                     resident.data.car.setDriver(null);
                     resident.isInCar = false;
                     resident.mesh.visible = false;
                     resident.data.car.carGroup.visible = false;
-                    data.outOfTownUntil = timeSeconds + (2 + Math.random() * 6) * 3600;
+                    schedule.outOfTownUntil = timeSeconds + (2 + Math.random() * 6) * 3600;
                 }
                 return;
             }
 
-            if (resident.isInCar && resident.data.car && !resident.data.car.target && resident.data.car.path.length === 0 && data.destinationLot) {
+            // Handle car arrival at destination
+            if (resident.isInCar && resident.data.car &&
+                !resident.data.car.target && resident.data.car.path.length === 0 &&
+                schedule.destinationLot) {
                 resident.exitCar();
-                const point = this.getRandomPointInLot(data.destinationLot);
+                const point = this.getRandomPointInLot(schedule.destinationLot);
                 resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
-                resident.behaviorState = ResidentState.WALKING_AROUND;
-                data.nextWanderTime = timeSeconds + (10 + Math.random() * 20) * 60;
             }
 
-            if (!resident.target && resident.path.length === 0 && timeSeconds >= data.nextWanderTime) {
-                const lot = data.destinationLot || resident.data.homeLot;
-                const point = this.getRandomPointInLot(lot);
-                resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
-                resident.behaviorState = ResidentState.WALKING_AROUND;
-                data.nextWanderTime = timeSeconds + (10 + Math.random() * 20) * 60;
-            }
+            // Check if we need to transition to next activity
+            this.updateActivity(resident, schedule, hour, timeSeconds);
         });
     }
 
-    private getSchedule(resident: Resident, hour: number): ScheduleData {
-        const slot = this.getSlot(hour);
-        const existing = this.schedules.get(resident.id);
-        if (existing && existing.slot === slot) {
-            return existing;
+    private getOrCreateSchedule(resident: Resident, day: number): IndividualSchedule {
+        let schedule = this.schedules.get(resident.id);
+
+        if (!schedule) {
+            schedule = {
+                currentActivity: ResidentState.SLEEPING,
+                activityStartTime: 0,
+                activityEndTime: 0,
+                dayPlan: [],
+                currentPlanIndex: -1,
+                lastPlanDay: -1,
+                leavingTown: false,
+            };
+            this.schedules.set(resident.id, schedule);
         }
 
-        const schedule = existing || { slot, nextWanderTime: 0, leavingTown: false };
-        schedule.slot = slot;
-        schedule.destinationLot = undefined;
-        schedule.leavingTown = false;
-        schedule.nextWanderTime = 0;
-        resident.allowedLots = [];
-
-        if (slot === 'night') {
-            resident.startReturnHome();
-            schedule.destinationLot = resident.data.homeLot;
-        } else if (slot === 'morning') {
-            schedule.destinationLot = resident.data.homeLot;
-        } else if (slot === 'day') {
-            const leaveTown = resident.data.hasCar && Math.random() < 0.1;
-            if (leaveTown && resident.data.car) {
-                resident.enterCar();
-                resident.behaviorState = ResidentState.DRIVING;
-                const exitPoint = this.getHighwayExitPoint();
-                resident.data.car.target = new THREE.Vector3(exitPoint.x, 1, -exitPoint.y);
-                schedule.leavingTown = true;
-            } else {
-                const dest = this.pickDestinationLot(resident, hour);
-                schedule.destinationLot = dest;
-                if (resident.data.hasCar && resident.data.car) {
-                    resident.enterCar();
-                    resident.behaviorState = ResidentState.DRIVING;
-                    const target = this.getParkingTarget(dest);
-                    resident.data.car.target = new THREE.Vector3(target.x, 1, -target.y);
-                } else {
-                    const point = this.getRandomPointInLot(dest);
-                    resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
-                    resident.behaviorState = ResidentState.WALKING_AROUND;
-                }
-            }
-        } else if (slot === 'evening') {
-            const visitFriend = Math.random() < 0.4;
-            const dest = visitFriend ? this.pickFriendLot(resident) : this.pickDestinationLot(resident, hour);
-            schedule.destinationLot = dest;
-            if (visitFriend) {
-                resident.allowedLots = [dest.id];
-            }
-            if (resident.data.hasCar && resident.data.car) {
-                resident.enterCar();
-                resident.behaviorState = ResidentState.DRIVING;
-                const target = this.getParkingTarget(dest);
-                resident.data.car.target = new THREE.Vector3(target.x, 1, -target.y);
-            } else {
-                const point = this.getRandomPointInLot(dest);
-                resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
-                resident.behaviorState = ResidentState.WALKING_AROUND;
-            }
+        // Generate new daily plan if day changed
+        if (schedule.lastPlanDay !== day) {
+            this.generateDayPlan(resident, schedule, day);
+            schedule.lastPlanDay = day;
         }
 
-        this.schedules.set(resident.id, schedule);
         return schedule;
     }
 
-    private getSlot(hour: number): ScheduleSlot {
-        if (hour >= 21 || hour < 6) return 'night';
-        if (hour >= 6 && hour < 9) return 'morning';
-        if (hour >= 9 && hour < 17) return 'day';
-        return 'evening';
+    private generateDayPlan(resident: Resident, schedule: IndividualSchedule, day: number) {
+        const data = resident.data;
+        const plan: ScheduledActivity[] = [];
+
+        // Add daily variation
+        const dailyOffset = (Math.random() - 0.5) * data.routineVariation * 2; // +/- routine variation hours
+
+        // Sleep until wake time
+        const wakeTime = Math.max(0, data.wakeTime + dailyOffset);
+        plan.push({
+            activity: ResidentState.SLEEPING,
+            startHour: 0,
+            endHour: wakeTime,
+            targetLot: data.homeLot,
+            priority: 10,
+        });
+
+        // Morning routine at home
+        const morningEnd = wakeTime + 0.5 + Math.random() * 0.5;
+        plan.push({
+            activity: ResidentState.IDLE_HOME,
+            startHour: wakeTime,
+            endHour: morningEnd,
+            targetLot: data.homeLot,
+            priority: 5,
+        });
+
+        // Work schedule (if applicable)
+        if (data.workStartTime !== undefined && data.workEndTime !== undefined) {
+            const workStart = data.workStartTime + dailyOffset * 0.5;
+            const workEnd = data.workEndTime + dailyOffset * 0.5;
+
+            // Travel to work location (find a commercial lot)
+            const workLot = this.findWorkLot(resident);
+            if (workLot) {
+                plan.push({
+                    activity: ResidentState.WORKING,
+                    startHour: workStart,
+                    endHour: workEnd,
+                    targetLot: workLot,
+                    priority: 8,
+                });
+            }
+        }
+
+        // Add lifestyle-based activities
+        this.addLifestyleActivities(resident, plan, dailyOffset);
+
+        // Church on Sunday
+        if (this.dayOfWeek === 0 && data.religiosity > 0.4 && Math.random() < data.religiosity) {
+            const churchLot = this.lots.find(l => l.usage === LotUsage.CHURCH);
+            if (churchLot) {
+                plan.push({
+                    activity: ResidentState.AT_CHURCH,
+                    startHour: 10,
+                    endHour: 11.5,
+                    targetLot: churchLot,
+                    priority: 7,
+                });
+            }
+        }
+
+        // Bar/restaurant visit - open 11am to 1am
+        const barLot = this.lots.find(l => l.usage === LotUsage.BAR);
+        if (barLot) {
+            // Lunch visit (based on sociability - eating out)
+            if (data.sociability > 0.4 && Math.random() < data.sociability * 0.3) {
+                const lunchStart = 11.5 + Math.random() * 1.5; // 11:30am-1pm
+                plan.push({
+                    activity: ResidentState.EATING,
+                    startHour: lunchStart,
+                    endHour: lunchStart + 0.5 + Math.random() * 0.5,
+                    targetLot: barLot,
+                    priority: 4,
+                });
+            }
+
+            // Evening bar visit (based on drinking habit)
+            if (data.drinkingHabit > 0.2 && Math.random() < data.drinkingHabit) {
+                const barStart = 18 + Math.random() * 4; // 6pm-10pm
+                const barDuration = 1 + Math.random() * 2 * data.drinkingHabit;
+                plan.push({
+                    activity: ResidentState.AT_BAR,
+                    startHour: barStart,
+                    endHour: Math.min(barStart + barDuration, 25), // Cap at 1am
+                    targetLot: barLot,
+                    priority: 4,
+                });
+            }
+        }
+
+        // Evening wind down at home
+        const sleepTime = Math.min(24, data.sleepTime + dailyOffset);
+        plan.push({
+            activity: ResidentState.IDLE_HOME,
+            startHour: sleepTime - 1,
+            endHour: sleepTime,
+            targetLot: data.homeLot,
+            priority: 6,
+        });
+
+        // Sleep
+        plan.push({
+            activity: ResidentState.SLEEPING,
+            startHour: sleepTime,
+            endHour: 24,
+            targetLot: data.homeLot,
+            priority: 10,
+        });
+
+        // Sort by start time and resolve conflicts
+        plan.sort((a, b) => a.startHour - b.startHour);
+        schedule.dayPlan = this.resolveScheduleConflicts(plan);
+        schedule.currentPlanIndex = -1;
     }
 
-    private pickDestinationLot(resident: Resident, hour: number): Lot {
-        const isOpen = hour >= 9 && hour < 20;
+    private addLifestyleActivities(resident: Resident, plan: ScheduledActivity[], dailyOffset: number) {
+        const data = resident.data;
+
+        switch (data.lifestyle) {
+            case Lifestyle.SOCIAL_BUTTERFLY:
+                // Visit friends
+                if (Math.random() < 0.6) {
+                    const friendLot = this.pickFriendLot(resident);
+                    const visitStart = 14 + Math.random() * 4;
+                    plan.push({
+                        activity: ResidentState.SOCIALIZING,
+                        startHour: visitStart,
+                        endHour: visitStart + 1 + Math.random() * 2,
+                        targetLot: friendLot,
+                        priority: 5,
+                    });
+                }
+                // Wander in public spaces
+                if (Math.random() < 0.5) {
+                    const publicLot = this.pickPublicLot();
+                    if (publicLot) {
+                        const wanderStart = 10 + Math.random() * 6;
+                        plan.push({
+                            activity: ResidentState.WALKING_AROUND,
+                            startHour: wanderStart,
+                            endHour: wanderStart + 0.5 + Math.random(),
+                            targetLot: publicLot,
+                            priority: 3,
+                        });
+                    }
+                }
+                break;
+
+            case Lifestyle.HOMEBODY:
+                // Mostly stays home, occasional short outings
+                if (Math.random() < 0.3) {
+                    const nearbyLot = this.pickNearbyLot(resident);
+                    if (nearbyLot) {
+                        const outingStart = 11 + Math.random() * 4;
+                        plan.push({
+                            activity: ResidentState.WALKING_AROUND,
+                            startHour: outingStart,
+                            endHour: outingStart + 0.5,
+                            targetLot: nearbyLot,
+                            priority: 2,
+                        });
+                    }
+                }
+                break;
+
+            case Lifestyle.BALANCED:
+                // Mix of activities
+                if (Math.random() < 0.4) {
+                    const commercialLot = this.pickCommercialLot();
+                    if (commercialLot) {
+                        const shopStart = 10 + Math.random() * 6;
+                        plan.push({
+                            activity: ResidentState.SHOPPING,
+                            startHour: shopStart,
+                            endHour: shopStart + 0.5 + Math.random(),
+                            targetLot: commercialLot,
+                            priority: 4,
+                        });
+                    }
+                }
+                if (Math.random() < 0.3) {
+                    const publicLot = this.pickPublicLot();
+                    if (publicLot) {
+                        const walkStart = 16 + Math.random() * 3;
+                        plan.push({
+                            activity: ResidentState.WALKING_AROUND,
+                            startHour: walkStart,
+                            endHour: walkStart + 0.5 + Math.random() * 0.5,
+                            targetLot: publicLot,
+                            priority: 3,
+                        });
+                    }
+                }
+                break;
+
+            case Lifestyle.WORKAHOLIC:
+                // Extra work time or work-related outings
+                if (Math.random() < 0.5 && data.workStartTime !== undefined) {
+                    const workLot = this.findWorkLot(resident);
+                    if (workLot) {
+                        // Work longer or come back in evening
+                        plan.push({
+                            activity: ResidentState.WORKING,
+                            startHour: 19,
+                            endHour: 21,
+                            targetLot: workLot,
+                            priority: 6,
+                        });
+                    }
+                }
+                break;
+        }
+
+        // Random chance to leave town (if has car)
+        if (data.hasCar && Math.random() < 0.1) {
+            // Will be handled separately
+        }
+    }
+
+    private resolveScheduleConflicts(plan: ScheduledActivity[]): ScheduledActivity[] {
+        const resolved: ScheduledActivity[] = [];
+
+        for (const activity of plan) {
+            let overlaps = false;
+            for (const existing of resolved) {
+                if (activity.startHour < existing.endHour && activity.endHour > existing.startHour) {
+                    // Overlap - keep higher priority
+                    if (activity.priority > existing.priority) {
+                        // Remove existing, adjust times
+                        const idx = resolved.indexOf(existing);
+                        if (idx !== -1) {
+                            // Trim existing around new activity
+                            if (existing.startHour < activity.startHour) {
+                                resolved[idx] = { ...existing, endHour: activity.startHour };
+                            } else {
+                                resolved.splice(idx, 1);
+                            }
+                        }
+                    } else {
+                        overlaps = true;
+                    }
+                }
+            }
+            if (!overlaps) {
+                resolved.push(activity);
+            }
+        }
+
+        return resolved.sort((a, b) => a.startHour - b.startHour);
+    }
+
+    private updateActivity(resident: Resident, schedule: IndividualSchedule, hour: number, timeSeconds: number) {
+        // Find current activity in day plan
+        const currentPlan = schedule.dayPlan.find(a =>
+            hour >= a.startHour && hour < a.endHour
+        );
+
+        if (!currentPlan) {
+            // Fill gap with idle at home
+            if (schedule.currentActivity !== ResidentState.IDLE_HOME &&
+                schedule.currentActivity !== ResidentState.WALKING_HOME) {
+                this.transitionTo(resident, schedule, ResidentState.IDLE_HOME, resident.data.homeLot, timeSeconds);
+            }
+            return;
+        }
+
+        // Check if activity changed
+        if (schedule.currentActivity !== currentPlan.activity ||
+            schedule.destinationLot?.id !== currentPlan.targetLot?.id) {
+            this.transitionTo(resident, schedule, currentPlan.activity, currentPlan.targetLot, timeSeconds);
+        }
+
+        // Handle idle movement within current location
+        if (!resident.isInCar && !resident.target && resident.path.length === 0) {
+            if (schedule.currentActivity === ResidentState.WALKING_AROUND ||
+                schedule.currentActivity === ResidentState.IDLE_HOME ||
+                schedule.currentActivity === ResidentState.SOCIALIZING) {
+                // Occasionally wander within the lot
+                if (Math.random() < 0.02) { // ~2% chance per update
+                    const lot = schedule.destinationLot || resident.data.homeLot;
+                    const point = this.getRandomPointInLot(lot);
+                    resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
+                }
+            }
+        }
+    }
+
+    private transitionTo(resident: Resident, schedule: IndividualSchedule, activity: ResidentState, targetLot: Lot | undefined, timeSeconds: number) {
+        schedule.currentActivity = activity;
+        schedule.destinationLot = targetLot;
+        schedule.activityStartTime = timeSeconds;
+        resident.behaviorState = activity;
+
+        // Set allowed lots for socializing
+        if (activity === ResidentState.SOCIALIZING && targetLot) {
+            resident.allowedLots = [targetLot.id];
+        } else {
+            resident.allowedLots = [];
+        }
+
+        // Handle travel to destination
+        if (targetLot && targetLot.id !== resident.data.homeLot.id) {
+            const currentLot = this.getCurrentLot(resident);
+            const needsTravel = !currentLot || currentLot.id !== targetLot.id;
+
+            if (needsTravel) {
+                if (resident.data.hasCar && resident.data.car && this.shouldUseCar(resident, targetLot)) {
+                    // Drive there
+                    resident.enterCar();
+                    resident.behaviorState = ResidentState.DRIVING;
+                    const target = this.getParkingTarget(targetLot);
+                    resident.data.car.target = new THREE.Vector3(target.x, 1, target.y);
+                } else {
+                    // Walk there
+                    const point = this.getRandomPointInLot(targetLot);
+                    resident.setTargetPosition(new THREE.Vector3(point.x, 2, point.y));
+                }
+            }
+        } else if (activity === ResidentState.SLEEPING || activity === ResidentState.IDLE_HOME) {
+            // Go home if not there
+            if (!resident.isHome) {
+                resident.startReturnHome();
+            }
+        }
+    }
+
+    private shouldUseCar(resident: Resident, targetLot: Lot): boolean {
+        // Calculate distance to target
+        const targetCenter = this.getLotCenter(targetLot);
+        const dist = Math.sqrt(
+            Math.pow(resident.position.x - targetCenter.x, 2) +
+            Math.pow(resident.position.z - targetCenter.y, 2)
+        );
+
+        // Use car for longer distances, based on adventurous trait
+        const walkingThreshold = 100 + resident.data.adventurous * 200;
+        return dist > walkingThreshold;
+    }
+
+    private getCurrentLot(resident: Resident): Lot | undefined {
+        const x = resident.position.x;
+        const y = resident.position.z;
+        return this.lots.find(lot => this.isPointInLot(x, y, lot.points));
+    }
+
+    private findWorkLot(resident: Resident): Lot | undefined {
+        // Find a commercial lot that could be their "workplace"
+        const commercialLots = this.lots.filter(l =>
+            l.usage === LotUsage.COMMERCIAL || l.usage === LotUsage.PUBLIC
+        );
+        if (commercialLots.length === 0) return undefined;
+
+        // Consistent workplace per resident (seeded by id)
+        const hash = resident.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+        return commercialLots[hash % commercialLots.length];
+    }
+
+    private pickFriendLot(resident: Resident): Lot {
         const candidates = this.lots.filter(lot =>
-            lot.usage === LotUsage.PUBLIC || (lot.usage === LotUsage.COMMERCIAL && isOpen)
+            lot.usage === LotUsage.RESIDENTIAL && lot.id !== resident.data.homeLot.id
         );
         if (candidates.length === 0) return resident.data.homeLot;
         return candidates[Math.floor(Math.random() * candidates.length)];
     }
 
-    private pickFriendLot(resident: Resident): Lot {
-        const candidates = this.lots.filter(lot => lot.usage === LotUsage.RESIDENTIAL && lot.id !== resident.data.homeLot.id);
-        if (candidates.length === 0) return resident.data.homeLot;
+    private pickPublicLot(): Lot | undefined {
+        const candidates = this.lots.filter(lot => lot.usage === LotUsage.PUBLIC);
+        if (candidates.length === 0) return undefined;
         return candidates[Math.floor(Math.random() * candidates.length)];
     }
 
-    private getLotCenter(lot: Lot): { x: number; y: number } {
-        return {
-            x: lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length,
-            y: lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length,
-        };
+    private pickCommercialLot(): Lot | undefined {
+        const candidates = this.lots.filter(lot => lot.usage === LotUsage.COMMERCIAL);
+        if (candidates.length === 0) return undefined;
+        return candidates[Math.floor(Math.random() * candidates.length)];
     }
 
-    private getParkingTarget(lot: Lot): { x: number; y: number } {
-        return lot.parkingSpot || lot.entryPoint || this.getLotCenter(lot);
-    }
-
-    private getRandomPointInLot(lot: Lot): { x: number; y: number } {
-        const minX = Math.min(...lot.points.map(p => p.x));
-        const maxX = Math.max(...lot.points.map(p => p.x));
-        const minY = Math.min(...lot.points.map(p => p.y));
-        const maxY = Math.max(...lot.points.map(p => p.y));
-
-        for (let i = 0; i < 20; i++) {
-            const x = minX + Math.random() * (maxX - minX);
-            const y = minY + Math.random() * (maxY - minY);
-            if (this.isPointInLot(x, y, lot.points)) {
-                return { x, y };
-            }
-        }
-        return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+    private pickNearbyLot(resident: Resident): Lot | undefined {
+        const homeCenter = this.getLotCenter(resident.data.homeLot);
+        const candidates = this.lots.filter(lot => {
+            if (lot.id === resident.data.homeLot.id) return false;
+            const center = this.getLotCenter(lot);
+            const dist = Math.sqrt(Math.pow(center.x - homeCenter.x, 2) + Math.pow(center.y - homeCenter.y, 2));
+            return dist < 200; // Within 200 units
+        });
+        if (candidates.length === 0) return undefined;
+        return candidates[Math.floor(Math.random() * candidates.length)];
     }
 
     private returnFromTown(resident: Resident) {
@@ -217,8 +541,74 @@ export class ResidentScheduleSystem {
         };
     }
 
-    private getHighwayExitPoint(): { x: number; y: number } {
-        return this.getHighwayEntryPoint();
+    private getLotCenter(lot: Lot): { x: number; y: number } {
+        return {
+            x: lot.points.reduce((s, p) => s + p.x, 0) / lot.points.length,
+            y: lot.points.reduce((s, p) => s + p.y, 0) / lot.points.length,
+        };
+    }
+
+    private getParkingTarget(lot: Lot): { x: number; y: number } {
+        // If lot has its own parking, use it
+        if (lot.parkingSpot) return lot.parkingSpot;
+        if (lot.entryPoint) return lot.entryPoint;
+
+        // For special lots (bar, church), look for nearby parking lots
+        if (lot.usage === LotUsage.BAR || lot.usage === LotUsage.CHURCH) {
+            const nearbyParking = this.findNearbyParkingLot(lot);
+            if (nearbyParking) {
+                return this.getLotCenter(nearbyParking);
+            }
+        }
+
+        return this.getLotCenter(lot);
+    }
+
+    private findNearbyParkingLot(targetLot: Lot): Lot | undefined {
+        const targetCenter = this.getLotCenter(targetLot);
+        const parkingLots = this.lots.filter(l => l.usage === LotUsage.PARKING);
+
+        if (parkingLots.length === 0) return undefined;
+
+        // Find closest parking lot
+        let closest: Lot | undefined;
+        let closestDist = Infinity;
+
+        for (const parking of parkingLots) {
+            const center = this.getLotCenter(parking);
+            const dist = Math.sqrt(
+                Math.pow(center.x - targetCenter.x, 2) +
+                Math.pow(center.y - targetCenter.y, 2)
+            );
+            if (dist < closestDist) {
+                closestDist = dist;
+                closest = parking;
+            }
+        }
+
+        return closest;
+    }
+
+    private getRandomPointInLot(lot: Lot): { x: number; y: number } {
+        const minX = Math.min(...lot.points.map(p => p.x));
+        const maxX = Math.max(...lot.points.map(p => p.x));
+        const minY = Math.min(...lot.points.map(p => p.y));
+        const maxY = Math.max(...lot.points.map(p => p.y));
+        const margin = 8;
+        const insetMinX = minX + margin;
+        const insetMaxX = maxX - margin;
+        const insetMinY = minY + margin;
+        const insetMaxY = maxY - margin;
+        const useInset = insetMinX < insetMaxX && insetMinY < insetMaxY;
+
+        for (let i = 0; i < 24; i++) {
+            const x = (useInset ? insetMinX : minX) + Math.random() * ((useInset ? insetMaxX : maxX) - (useInset ? insetMinX : minX));
+            const y = (useInset ? insetMinY : minY) + Math.random() * ((useInset ? insetMaxY : maxY) - (useInset ? insetMinY : minY));
+            if (this.isPointInLot(x, y, lot.points)) {
+                return { x, y };
+            }
+        }
+        return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
     }
 
     private isPointInLot(x: number, y: number, points: { x: number; y: number }[]): boolean {

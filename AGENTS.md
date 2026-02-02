@@ -37,25 +37,28 @@ Transitions between the **Road Network** and **Private Lots** must occur at spec
 - **The "Roadside" Rule**:
     - Every Lot defines a "Frontage" side—typically the shorter edge facing the nearest road.
     - Entry/Exit paths must connect the Road's edge to the Lot's "Gateway" point.
-    - Agents cannot hop over back fences or cross from Lot A directly to adjacent Lot B (unless there is a shared path, initially Assume No).
+- **Driveways & Gates**:
+    - Vehicles use "Drive-in" points (offset from parking spot) to enter smoothly.
+    - Pedestrians use "Gates" (fence openings) or "Sidewalk" access points.
 
 ### 4. Pathfinding Strategy
 
-The Pathfinding System must provide valid paths that respect these constraints.
+The Pathfinding System (`PathfindingSystem.ts`) manages all movement.
 
 #### Structure
-- **Global Graph**: A navigation graph derived from Road Segments.
-    - Nodes: Intersections, Lot Entry Points.
-    - Edges: Road Lanes (Vehicle), Sidewalks (Pedestrian).
-- **Local Navigation**: Inside a Lot, agents move directly to specific points of interest (Door, Bed, Chair) or randomly wander within bounds.
+- **Road Graph**: A* navigation graph for Vehicles. Nodes at intersections and along road segments.
+- **Pedestrian Graph**: Separate graph for sidewalks. Ensures pedestrians stay safe from traffic.
+- **Local Navigation**: 
+    - Inside Lots: Agents use direct movement or "Wander" logic (with boundary checks).
+    - **Bounce Prevention**: Agents on public paths (Sidewalks/Roads) are allowed to traverse edge-cases where lot boundaries might overlap the public right-of-way.
 
 #### Movement Flow (Example: "Going Home")
 1.  **Start**: Agent is at Work (Lot A).
 2.  **Exit Lot**: Walk from Building Door -> Lot A Gateway -> Roadside A.
 3.  **Transit**:
-    - *If Driving*: Enter Car -> Drive Road A -> Road B -> Road C -> Roadside Home.
-    - *If Walking*: Walk Sidewalk A -> Sidewalk B -> Sidewalk C -> Roadside Home.
-4.  **Enter Lot**: Roadside Home -> Gateway Home -> Park Car (if driving) -> Walk to Door.
+    - *If Driving*: Enter Car -> Drive Road A -> Road B -> Roadside Home.
+    - *If Walking*: Walk Sidewalk A -> Sidewalk B -> Roadside Home.
+4.  **Enter Lot**: Roadside Home -> Gateway Home -> Park Car -> Walk to Door.
 
 ## Simulation Data
 
@@ -63,19 +66,25 @@ The Pathfinding System must provide valid paths that respect these constraints.
 - **Home Lot**: ID of the lot they own/rent.
 - **Vehicle**: Optional ID of a vehicle they own.
 - **Schedule**: Daily routine (Work, Sleep, Socialize).
+- **Pets**: May own a Cat or Dog.
 
 ### Tourist
 - **Temporary State**: Visits for a duration, then leaves map via Highway.
 - **Behavior**: Wanders between "Attraction" lots (Art Installations, Ruins, Bar).
+- **Lodging**: May stay at a Lodging lot (Motel/Campground).
 
-## Implementation Roadmap
+### Service Agents
+- **Sheriff**: Patrols the town roads, occasionally stopping at key locations.
+- **School Bus**: Follows a fixed route to pick up/drop off children (Implementation in progress).
 
-1.  **Data Refinements**:
-    - Compute "Frontage" edge for every Lot.
-    - Generate "Gateway" points for every Lot.
-    - Generate Navigation Graph (Nodes/Edges).
-2.  **Movement Logic**:
-    - Implement precise "Lane Following" (not just random points).
-    - Implement "Gate Traversal" (Road <-> Lot).
-3.  **Agent Logic**:
-    - State Machine: `IDLE` -> `WALKING_TO_CAR` -> `DRIVING` -> `PARKING` -> `WALKING_TO_DOOR`.
+### Pets (Ambient)
+- **Cats**: Roam freely, can enter any lot (ignoring fences). Tend to wander near home.
+- **Dogs**: Roam inside lots, occasionally venture out. Constrained by fences unless with owner (future).
+
+## Implementation Status (Current)
+
+- **Graphs**: Fully implemented (Road & Pedestrian).
+- **Schedules**: Residents have 24h routines.
+- **Tourists**: Spawning and visiting attractions.
+- **Pets**: Basic wandering behavior implemented.
+- **Vehicles**: Parking logic, collision avoidance (separation), and road adhesion logic implemented.

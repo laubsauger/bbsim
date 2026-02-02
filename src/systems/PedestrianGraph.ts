@@ -355,7 +355,7 @@ export class PedestrianGraph {
 
         for (const node of this.nodes.values()) {
             const sphere = new THREE.Mesh(nodeGeometry, nodeMaterial);
-            sphere.position.set(node.x, 8, -node.y);
+            sphere.position.set(node.x, 8, node.y);
             this.debugGroup.add(sphere);
 
             for (const connId of node.connections) {
@@ -366,8 +366,8 @@ export class PedestrianGraph {
                 const conn = this.nodes.get(connId);
                 if (!conn) continue;
                 const points = [
-                    new THREE.Vector3(node.x, 8, -node.y),
-                    new THREE.Vector3(conn.x, 8, -conn.y)
+                    new THREE.Vector3(node.x, 8, node.y),
+                    new THREE.Vector3(conn.x, 8, conn.y)
                 ];
                 const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
                 const line = new THREE.Line(lineGeo, edgeMaterial);

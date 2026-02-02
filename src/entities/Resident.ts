@@ -5,11 +5,45 @@ import { AgentType, Lot } from '../types';
 
 // Behavior states for residents
 export enum ResidentState {
+    SLEEPING = 'sleeping',
+    WAKING_UP = 'waking_up',
     IDLE_HOME = 'idle_home',
+    EATING = 'eating',
     WALKING_TO_CAR = 'walking_to_car',
     DRIVING = 'driving',
     WALKING_HOME = 'walking_home',
     WALKING_AROUND = 'walking_around',
+    WORKING = 'working',
+    SHOPPING = 'shopping',
+    AT_BAR = 'at_bar',
+    SOCIALIZING = 'socializing',
+    AT_CHURCH = 'at_church',
+}
+
+// When does this person prefer to wake/sleep
+export enum Chronotype {
+    EARLY_BIRD = 'early_bird',     // 5-6am wake, 9-10pm sleep
+    NORMAL = 'normal',             // 7-8am wake, 10-11pm sleep
+    NIGHT_OWL = 'night_owl',       // 9-10am wake, midnight-1am sleep
+}
+
+// What kind of work schedule do they have
+export enum WorkSchedule {
+    UNEMPLOYED = 'unemployed',
+    RETIRED = 'retired',
+    DAY_SHIFT = 'day_shift',       // 8am-5pm
+    LATE_SHIFT = 'late_shift',     // 2pm-10pm
+    NIGHT_SHIFT = 'night_shift',   // 10pm-6am
+    FREELANCE = 'freelance',       // Random hours
+    PART_TIME = 'part_time',       // Few hours here and there
+}
+
+// General lifestyle preferences
+export enum Lifestyle {
+    HOMEBODY = 'homebody',         // Rarely leaves home
+    BALANCED = 'balanced',         // Normal mix
+    SOCIAL_BUTTERFLY = 'social_butterfly', // Always out and about
+    WORKAHOLIC = 'workaholic',     // Work-focused
 }
 
 // Name pools for generation
@@ -46,9 +80,26 @@ export interface ResidentData {
     homeLot: Lot;
     hasCar: boolean;
     car?: Vehicle;
-    // Personality traits (0-1)
-    sociability: number;  // How often they go out
-    adventurous: number;  // How far they roam
+
+    // Core personality traits (0-1)
+    sociability: number;      // How often they seek social interaction
+    adventurous: number;      // How far they roam, try new things
+    religiosity: number;      // How likely to attend church
+    drinkingHabit: number;    // How often they visit the bar (0 = never, 1 = daily)
+
+    // Schedule personality
+    chronotype: Chronotype;
+    workSchedule: WorkSchedule;
+    lifestyle: Lifestyle;
+
+    // Timing variation (0-1) - how much their schedule varies day to day
+    routineVariation: number;
+
+    // Derived schedule times (in hours, with decimals for minutes)
+    wakeTime: number;         // e.g., 7.5 = 7:30am
+    sleepTime: number;        // e.g., 22.5 = 10:30pm
+    workStartTime?: number;   // If employed
+    workEndTime?: number;
 }
 
 // Helper to get address string
@@ -261,6 +312,90 @@ export class Resident extends Agent {
         const occupation = OCCUPATIONS[Math.floor(Math.random() * OCCUPATIONS.length)];
         const hasCar = Math.random() < 0.6; // 60% have cars
 
+        // Generate chronotype with age bias (older = earlier riser)
+        const chronotypeRoll = Math.random() + (age > 60 ? 0.3 : 0) - (age < 30 ? 0.2 : 0);
+        const chronotype = chronotypeRoll > 0.7 ? Chronotype.EARLY_BIRD :
+                          chronotypeRoll < 0.3 ? Chronotype.NIGHT_OWL : Chronotype.NORMAL;
+
+        // Generate work schedule based on occupation and age
+        let workSchedule: WorkSchedule;
+        if (age >= 65 || occupation === 'Retired') {
+            workSchedule = WorkSchedule.RETIRED;
+        } else if (occupation === 'Unemployed') {
+            workSchedule = WorkSchedule.UNEMPLOYED;
+        } else if (occupation === 'Bartender') {
+            workSchedule = WorkSchedule.LATE_SHIFT;
+        } else if (occupation === 'Remote Worker' || occupation === 'Artist' || occupation === 'Writer') {
+            workSchedule = WorkSchedule.FREELANCE;
+        } else if (Math.random() < 0.15) {
+            workSchedule = WorkSchedule.PART_TIME;
+        } else {
+            workSchedule = WorkSchedule.DAY_SHIFT;
+        }
+
+        // Generate lifestyle
+        const lifestyleRoll = Math.random();
+        const lifestyle = lifestyleRoll < 0.25 ? Lifestyle.HOMEBODY :
+                         lifestyleRoll < 0.5 ? Lifestyle.SOCIAL_BUTTERFLY :
+                         lifestyleRoll < 0.65 ? Lifestyle.WORKAHOLIC : Lifestyle.BALANCED;
+
+        // Calculate wake/sleep times based on chronotype with individual variation
+        const variation = () => (Math.random() - 0.5) * 1.5; // +/- 45 minutes
+        let wakeTime: number, sleepTime: number;
+        switch (chronotype) {
+            case Chronotype.EARLY_BIRD:
+                wakeTime = 5.5 + variation();
+                sleepTime = 21 + variation();
+                break;
+            case Chronotype.NIGHT_OWL:
+                wakeTime = 9.5 + variation();
+                sleepTime = 24.5 + variation(); // 12:30am
+                break;
+            default: // NORMAL
+                wakeTime = 7 + variation();
+                sleepTime = 22.5 + variation();
+        }
+
+        // Calculate work times based on schedule
+        let workStartTime: number | undefined;
+        let workEndTime: number | undefined;
+        switch (workSchedule) {
+            case WorkSchedule.DAY_SHIFT:
+                workStartTime = 8 + variation() * 0.5;
+                workEndTime = 17 + variation() * 0.5;
+                break;
+            case WorkSchedule.LATE_SHIFT:
+                workStartTime = 14 + variation() * 0.5;
+                workEndTime = 22 + variation() * 0.5;
+                break;
+            case WorkSchedule.NIGHT_SHIFT:
+                workStartTime = 22 + variation() * 0.5;
+                workEndTime = 6 + variation() * 0.5;
+                break;
+            case WorkSchedule.FREELANCE:
+                // Random work blocks
+                workStartTime = 10 + Math.random() * 4;
+                workEndTime = workStartTime + 3 + Math.random() * 4;
+                break;
+            case WorkSchedule.PART_TIME:
+                workStartTime = 9 + Math.random() * 6;
+                workEndTime = workStartTime + 3 + Math.random() * 2;
+                break;
+        }
+
+        // Drinking habit based on age and lifestyle
+        let drinkingHabit = Math.random() * 0.5;
+        if (lifestyle === Lifestyle.SOCIAL_BUTTERFLY) drinkingHabit += 0.3;
+        if (age < 25) drinkingHabit += 0.2;
+        if (age > 70) drinkingHabit -= 0.2;
+        drinkingHabit = Math.max(0, Math.min(1, drinkingHabit));
+
+        // Religiosity (higher for older, lower for young)
+        let religiosity = Math.random() * 0.6;
+        if (age > 55) religiosity += 0.25;
+        if (age < 30) religiosity -= 0.15;
+        religiosity = Math.max(0, Math.min(1, religiosity));
+
         const data: ResidentData = {
             id,
             firstName,
@@ -271,6 +406,16 @@ export class Resident extends Agent {
             hasCar,
             sociability: Math.random(),
             adventurous: Math.random(),
+            religiosity,
+            drinkingHabit,
+            chronotype,
+            workSchedule,
+            lifestyle,
+            routineVariation: 0.1 + Math.random() * 0.4, // 10-50% daily variation
+            wakeTime,
+            sleepTime,
+            workStartTime,
+            workEndTime,
         };
 
         const config: AgentConfig = {
